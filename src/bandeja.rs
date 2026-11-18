@@ -16,7 +16,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotK
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::config::{Config, CualAtajo};
+use crate::config::{Calidad, Config, CualAtajo, Resolucion};
 use crate::estado::{self, Estado};
 use crate::grabadora::{sonido, Grabadora};
 use crate::registro::log;
@@ -54,6 +54,16 @@ struct Bandeja {
     icono_gris: HICON,
     estado_escrito: Option<Estado>,
     error_avisado: Option<String>,
+    /// La laptop está desenchufada (en escritorio, siempre false).
+    en_bateria: bool,
+}
+
+/// ¿Es una laptop funcionando con la batería?
+fn en_bateria_ahora() -> bool {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut s = SYSTEM_POWER_STATUS::default();
+    // BatteryFlag 128 = no hay batería; 255 = no se sabe. ACLineStatus 0 = desenchufada.
+    unsafe { GetSystemPowerStatus(&mut s) }.is_ok() && !matches!(s.BatteryFlag, 128 | 255) && s.ACLineStatus == 0
 }
 
 thread_local! {
@@ -114,6 +124,21 @@ impl Bandeja {
         NOTIFYICONDATAW { cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32, hWnd: self.hwnd, uID: 1, ..Default::default() }
     }
 
+    /// ¿Está activo el ahorro con batería ahora mismo?
+    fn ahorrando(&self) -> bool {
+        self.cfg.ahorro_bateria && self.en_bateria
+    }
+
+    /// Lo que se graba de verdad: con el ahorro activo, 720p y calidad Ligera.
+    fn cfg_grabacion(&self) -> Config {
+        let mut c = self.cfg.clone();
+        if self.ahorrando() {
+            c.resolucion = Resolucion::P720;
+            c.calidad = Calidad::Ligera;
+        }
+        c
+    }
+
     fn grabando(&self) -> bool {
         self.grabadora.as_ref().and_then(|g| g.info.lock().ok().map(|i| i.grabando)).unwrap_or(false)
     }
@@ -126,7 +151,8 @@ impl Bandeja {
         if self.pausado {
             "Kairo · en pausa".into()
         } else if self.grabando() {
-            format!("Kairo · guarda los últimos {} ({})", crate::config::texto_duracion(self.cfg.segundos), self.texto_atajo_guardar())
+            let ahorro = if self.ahorrando() { " · ahorro con batería" } else { "" };
+            format!("Kairo · guarda los últimos {} ({}){ahorro}", crate::config::texto_duracion(self.cfg.segundos), self.texto_atajo_guardar())
         } else {
             "Kairo · no está grabando".into()
         }
@@ -196,7 +222,7 @@ impl Bandeja {
 
     fn iniciar_grabadora(&mut self) {
         if !self.pausado && self.grabadora.is_none() {
-            self.grabadora = Some(Grabadora::iniciar(&self.cfg));
+            self.grabadora = Some(Grabadora::iniciar(&self.cfg_grabacion()));
         }
     }
 
@@ -219,12 +245,29 @@ impl Bandeja {
     }
 
     unsafe fn recargar(&mut self) {
-        let nueva = Config::cargar();
-        let reiniciar = cambia_la_grabacion(&self.cfg, &nueva);
-        self.cfg = nueva;
+        let antes = self.cfg_grabacion();
+        self.cfg = Config::cargar();
+        let reiniciar = cambia_la_grabacion(&antes, &self.cfg_grabacion());
         self.registrar_atajos();
         if reiniciar {
             log("ajustes nuevos: se reinicia la grabación");
+            self.detener_grabadora();
+            self.iniciar_grabadora();
+        }
+        self.actualizar_estado();
+    }
+
+    /// Se enchufó o desenchufó la laptop: si eso cambia lo que se graba, se reinicia la grabación.
+    unsafe fn cambio_de_energia(&mut self) {
+        let ahora = en_bateria_ahora();
+        if ahora == self.en_bateria {
+            return;
+        }
+        let antes = self.cfg_grabacion();
+        self.en_bateria = ahora;
+        log(if ahora { "laptop desenchufada" } else { "laptop enchufada" });
+        if cambia_la_grabacion(&antes, &self.cfg_grabacion()) {
+            log(if self.ahorrando() { "ahorro con batería: 720p, calidad Ligera" } else { "fin del ahorro con batería" });
             self.detener_grabadora();
             self.iniciar_grabadora();
         }
@@ -285,6 +328,7 @@ impl Bandeja {
             detalle: info.detalle.clone(),
             error: error.clone(),
             ultimo_clip: self.ultimo_clip.clone(),
+            ahorro: self.ahorrando() && !self.pausado,
         };
         if self.estado_escrito.as_ref() != Some(&e) {
             estado::escribir(&e);
@@ -424,6 +468,10 @@ unsafe extern "system" fn procedimiento(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             con_app(|b| b.clip_listo());
             LRESULT(0)
         }
+        WM_POWERBROADCAST => {
+            con_app(|b| b.cambio_de_energia());
+            LRESULT(1)
+        }
         WM_TIMER => {
             con_app(|b| b.actualizar_estado());
             LRESULT(0)
@@ -489,6 +537,7 @@ pub fn ejecutar(fondo: bool) {
             icono_gris: crear_icono(lado, [g.r(), g.g(), g.b()]),
             estado_escrito: None,
             error_avisado: None,
+            en_bateria: en_bateria_ahora(),
         };
         APP.with(|x| *x.borrow_mut() = Some(bandeja));
         con_app(|b| {

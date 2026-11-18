@@ -5,8 +5,9 @@ los últimos segundos como MP4. Está pensado para que el juego no pierda FPS, t
 PCs de escritorio.
 
 > **Estado: vista previa.** La grabadora ya funciona: graba el monitor en segundo plano y guarda los
-> últimos segundos con F9, con el sonido del sistema. Faltan la captura de respaldo para laptops con dos
-> tarjetas (fase 2) y el modo "Solo el juego", el audio separado y el micrófono (fase 3).
+> últimos segundos con F9, con el sonido del sistema. Funciona también en laptops con dos tarjetas
+> (captura de respaldo), en tarjetas sin encoder (por procesador) y baja la calidad con batería.
+> Faltan el modo "Solo el juego", el audio separado y el micrófono (fase 3).
 
 ## Cómo se usa
 
@@ -20,9 +21,9 @@ PCs de escritorio.
 ## Cómo funciona
 
 ```
-Monitor ─Desktop Duplication─▶ textura BGRA (GPU) ─procesador de video D3D11─▶ NV12 (GPU)
+Monitor ─Desktop Duplication (o Windows Graphics Capture)─▶ BGRA (GPU) ─procesador de video─▶ NV12 (GPU)
                                                                    │
-                                                 encoder H.264 por hardware (Media Foundation)
+                       encoder H.264 por hardware (o el de Windows por procesador, 1080p30 como máximo)
                                                                    ▼
 Sonido del sistema (WASAPI loopback) ─▶ PCM 48 kHz ─▶  buffer en RAM (últimos N s)
                                                                    │ F9
@@ -50,8 +51,10 @@ proceso aparte que solo existe mientras está abierta. Se comunican con mensajes
   comparte, junto con sus FPS sin grabar y con Medal (medidos con PresentMon o CapFrameX).
 - [x] **Fase 1: grabadora mínima.** Ícono en la bandeja, tecla global (F9) para guardar, captura del monitor,
   encoder H.264 por hardware, buffer en RAM y MP4 con el audio del sistema.
-- [ ] **Fase 2: laptops primero.** Captura de respaldo para laptops con dos tarjetas de video, elegir con qué
-  tarjeta comprimir, modo laptop y prioridad baja en la GPU.
+- [x] **Fase 2: laptops primero.** Captura de respaldo (Windows Graphics Capture) para laptops con dos tarjetas,
+  elegir con qué tarjeta grabar, grabación por procesador si la tarjeta no tiene encoder, ahorro con batería y
+  cola de cuadros (no se saltan cuadros si el encoder se demora). Queda por medir en laptops reales; la
+  prioridad baja en la GPU queda como experimento para cuando haya mediciones.
 - [ ] **Fase 3: audio y juegos.** Detectar el juego, modo "Solo el juego", audio solo del juego, micrófono,
   pistas separadas y carpetas por juego.
 - [ ] **Fase 4: extras.** Recorte rápido de clips, actualizaciones verificadas y firma digital.

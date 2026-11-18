@@ -120,7 +120,10 @@ impl App {
                 Some(e) if e.tiene_dos_tarjetas() => fila(
                     ui,
                     "Tarjeta de video para grabar",
-                    Some("En automático se usa la que maneja tu monitor. En laptops, la integrada suele quitarle menos FPS al juego."),
+                    Some(
+                        "En automático se usa la que maneja tu monitor. En laptops, la integrada suele quitarle menos FPS \
+                         al juego. Si Windows no deja capturar desde la elegida, Kairo usa la captura de respaldo.",
+                    ),
                     |ui| {
                         segmentos(
                             ui,
@@ -140,6 +143,15 @@ impl App {
                     let nombre = e.gpus.first().map(|g| g.nombre.clone()).unwrap_or_else(|| "No se detectó ninguna".into());
                     fila(ui, "Tarjeta de video para grabar", Some(&nombre), |_| {});
                 }
+            }
+            if eq.is_some_and(|e| e.encoders.is_empty()) {
+                separador(ui);
+                fila(
+                    ui,
+                    "Sin encoder por hardware",
+                    Some("Tu tarjeta no comprime video: Kairo graba con el procesador, a 1080p y 30 fps como máximo, para no quitarle al juego."),
+                    |_| {},
+                );
             }
             if eq.is_some_and(|e| e.es_laptop()) {
                 separador(ui);
@@ -231,6 +243,38 @@ impl App {
 
     pub(super) fn pagina_sistema(&mut self, ui: &mut Ui, eq: Option<&Equipo>) {
         encabezado(ui, "Sistema", "Lo que Kairo detectó de tu equipo. Si algo falla, copia el diagnóstico y compártelo.");
+        let estado = self.estado.clone();
+        tarjeta(ui, "Grabadora", |ui| match &estado {
+            None => fila_info(ui, "Estado", "Cerrada"),
+            Some(e) => {
+                let texto = if e.pausado {
+                    "En pausa"
+                } else if e.grabando {
+                    "Grabando"
+                } else if e.error.is_some() {
+                    "No puede grabar"
+                } else {
+                    "Preparando"
+                };
+                fila_info(ui, "Estado", texto);
+                if let Some(err) = &e.error {
+                    separador(ui);
+                    fila_info_color(ui, "Problema", err, ROJO);
+                }
+                if !e.detalle.is_empty() && e.grabando {
+                    separador(ui);
+                    fila_info(ui, "Grabando con", &e.detalle.replace(" · ", "\n"));
+                }
+                if e.ahorro {
+                    separador(ui);
+                    fila_info(ui, "Ahorro con batería", "Activo: 720p y calidad Ligera mientras esté desenchufada.");
+                }
+                if let Some(c) = &e.ultimo_clip {
+                    separador(ui);
+                    fila_info(ui, "Último clip", c);
+                }
+            }
+        });
         tarjeta(ui, "Tu equipo", |ui| {
             let Some(e) = eq else {
                 fila_info(ui, "Detectando…", "");

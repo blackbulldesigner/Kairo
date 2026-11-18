@@ -4,11 +4,14 @@
 mod audio;
 mod buffer;
 mod captura;
+mod codificador;
 mod encoder;
+mod h264;
 mod mp4;
 pub mod reloj;
 pub mod sonido;
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,7 +21,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
-use crate::config::Config;
+use crate::config::{Config, Resolucion};
 use crate::registro::log;
 use buffer::{Buffer, FormatoVideo};
 use reloj::SEGUNDO;
@@ -163,13 +166,61 @@ fn hilo_video(cfg: &Config, detener: &AtomicBool, buffer: &Mutex<Buffer>, info: 
     poner_info(info, |i| i.grabando = false);
 }
 
-fn sesion_video(cfg: &Config, detener: &AtomicBool, buffer: &Mutex<Buffer>, info: &Mutex<Info>) -> Result<()> {
-    let monitor = captura::buscar_monitor(cfg.monitor.as_deref())?;
-    let mut cap = captura::Captura::abrir(&monitor, |w, h| cfg.tamano_clip((w, h)), cfg.fps)?;
-    let bitrate = (cfg.mbps((cap.ancho_monitor, cap.alto_monitor)) * 1_000_000.0) as u32;
-    let mut enc = encoder::Encoder::abrir(&cap.dispositivo, cap.luid, cap.ancho, cap.alto, cfg.fps, bitrate)?;
-    let formato = FormatoVideo { ancho: enc.ancho, alto: enc.alto, fps: cfg.fps, bitrate, encoder: enc.nombre.clone() };
-    let detalle = format!("{}×{} a {} fps · {}", enc.ancho, enc.alto, cfg.fps, enc.nombre);
+/// Ayudas para probar caminos que en esta PC no se darían solos (también sirven para diagnosticar):
+/// `KAIRO_CAPTURA=respaldo` fuerza Windows Graphics Capture y `KAIRO_PROCESADOR=1` el encoder por procesador.
+fn forzado(variable: &str, valor: &str) -> bool {
+    std::env::var(variable).is_ok_and(|v| v.eq_ignore_ascii_case(valor))
+}
+
+/// Grabar con el procesador cuesta mucho más: como máximo 1080p y 30 fps, para no quitarle al juego.
+fn limitar_para_procesador(cfg: &Config) -> Config {
+    let mut c = cfg.clone();
+    if matches!(c.resolucion, Resolucion::Nativa | Resolucion::P1440) {
+        c.resolucion = Resolucion::P1080;
+    }
+    c.fps = 30;
+    c
+}
+
+/// Cuántos cuadros pueden esperar a que el encoder los pida (si se llena, se descarta el más viejo).
+const COLA_MAXIMA: usize = 4;
+
+fn sesion_video(cfg_pedida: &Config, detener: &AtomicBool, buffer: &Mutex<Buffer>, info: &Mutex<Info>) -> Result<()> {
+    let monitor = captura::buscar_monitor(cfg_pedida.monitor.as_deref())?;
+    let tarjeta = captura::tarjeta_para(cfg_pedida.tarjeta, &monitor);
+    let respaldo = forzado("KAIRO_CAPTURA", "respaldo");
+    fn tamano(c: &Config) -> impl Fn(u32, u32) -> (u32, u32) + '_ {
+        move |w, h| c.tamano_clip((w, h))
+    }
+    let bitrate = |c: &Config, cap: &captura::Captura| (c.mbps((cap.ancho_monitor, cap.alto_monitor)) * 1_000_000.0) as u32;
+
+    let mut cfg = cfg_pedida.clone();
+    let mut cap = captura::Captura::abrir(&monitor, &tarjeta, respaldo, tamano(&cfg), cfg.fps)?;
+    let hardware = if forzado("KAIRO_PROCESADOR", "1") {
+        Err(anyhow!("forzado con KAIRO_PROCESADOR"))
+    } else {
+        encoder::Encoder::abrir(&cap.dispositivo, cap.luid, cap.ancho, cap.alto, cfg.fps, bitrate(&cfg, &cap))
+    };
+    let mut enc = match hardware {
+        Ok(e) => codificador::Codificador::Hardware(e),
+        Err(e) => {
+            log(&format!("sin encoder por hardware ({e:#}): se graba con el procesador"));
+            cfg = limitar_para_procesador(cfg_pedida);
+            drop(cap);
+            cap = captura::Captura::abrir(&monitor, &tarjeta, respaldo, tamano(&cfg), cfg.fps)?;
+            let e = codificador::EncoderProcesador::abrir(&cap.dispositivo, cap.ancho, cap.alto, cfg.fps, bitrate(&cfg, &cap))?;
+            // Que el juego tenga prioridad sobre la compresión.
+            unsafe {
+                use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
+                let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            }
+            codificador::Codificador::Procesador(e)
+        }
+    };
+    let (ancho, alto) = enc.tamano();
+    let bitrate = bitrate(&cfg, &cap);
+    let formato = FormatoVideo { ancho, alto, fps: cfg.fps, bitrate, encoder: enc.nombre().to_string() };
+    let detalle = format!("{ancho}×{alto} a {} fps · {} · {} · {}", cfg.fps, enc.nombre(), cap.metodo, cap.nombre_tarjeta);
     log(&format!("grabando {} (monitor {} de {}×{})", detalle, monitor.id, cap.ancho_monitor, cap.alto_monitor));
     if let Ok(mut b) = buffer.lock() {
         b.poner_formato(formato);
@@ -184,6 +235,10 @@ fn sesion_video(cfg: &Config, detener: &AtomicBool, buffer: &Mutex<Buffer>, info
     let inicio = reloj::ahora();
     let mut n: i64 = 0;
     let mut paquetes = Vec::new();
+    // Cuadros convertidos que esperan a que el encoder los pida: si está ocupado un momento, el cuadro
+    // no se pierde.
+    let mut cola = VecDeque::new();
+    let mut descartados = 0u64;
     while !detener.load(Ordering::SeqCst) {
         let mut objetivo = inicio + n * dur;
         let ahora = reloj::ahora();
@@ -196,8 +251,18 @@ fn sesion_video(cfg: &Config, detener: &AtomicBool, buffer: &Mutex<Buffer>, info
         cap.capturar()?;
         enc.atender(&mut paquetes)?;
         if cap.hay_cuadro() {
-            let tex = cap.convertir()?;
-            enc.enviar(&tex, objetivo)?;
+            cola.push_back((cap.convertir()?, objetivo));
+            if cola.len() > COLA_MAXIMA {
+                cola.pop_front();
+                descartados += 1;
+                if descartados.is_power_of_two() {
+                    log(&format!("video: el encoder no da abasto, {descartados} cuadros descartados"));
+                }
+            }
+        }
+        while enc.puede_recibir() {
+            let Some((tex, pts)) = cola.pop_front() else { break };
+            enc.enviar(&tex, pts)?;
         }
         enc.atender(&mut paquetes)?;
         if !paquetes.is_empty() {

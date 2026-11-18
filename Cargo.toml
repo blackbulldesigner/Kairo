@@ -1,6 +1,6 @@
 [package]
 name = "kairo"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Grabador de clips instantáneos para Windows, ligero y pensado para no bajar los FPS"
@@ -16,6 +16,11 @@ png = { version = "0.17", optional = true }
 [dependencies.windows]
 version = "0.58"
 features = [
+    "Foundation",
+    "Graphics",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
@@ -38,6 +43,9 @@ features = [
     "Win32_System_Threading",
     "Win32_System_Time",
     "Win32_System_Variant",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",

@@ -17,45 +17,6 @@ fn tamano(a: u32, b: u32) -> u64 {
     ((a as u64) << 32) | b as u64
 }
 
-/// Unidades NAL de un flujo Annex B (sin los códigos de inicio).
-fn unidades_nal(datos: &[u8]) -> Vec<&[u8]> {
-    let mut inicios = Vec::new();
-    let mut i = 0;
-    while i + 3 <= datos.len() {
-        if datos[i] == 0 && datos[i + 1] == 0 && datos[i + 2] == 1 {
-            inicios.push(i + 3);
-            i += 3;
-        } else {
-            i += 1;
-        }
-    }
-    let mut nal = Vec::new();
-    for (k, &ini) in inicios.iter().enumerate() {
-        let mut fin = inicios.get(k + 1).map(|&s| s - 3).unwrap_or(datos.len());
-        // El código de inicio de 4 bytes deja un cero de más al final de la unidad anterior.
-        while fin > ini && datos[fin - 1] == 0 && k + 1 < inicios.len() {
-            fin -= 1;
-        }
-        if fin > ini {
-            nal.push(&datos[ini..fin]);
-        }
-    }
-    nal
-}
-
-/// SPS y PPS del primer cuadro clave, en Annex B: el encabezado que necesita el MP4. Se toman del
-/// video mismo para que siempre coincidan con lo que el encoder escribió.
-fn encabezado_h264(datos: &[u8]) -> Option<Vec<u8>> {
-    let nal = unidades_nal(datos);
-    let sps = nal.iter().find(|n| n[0] & 0x1F == 7)?;
-    let pps = nal.iter().find(|n| n[0] & 0x1F == 8)?;
-    let mut h = vec![0, 0, 0, 1];
-    h.extend_from_slice(sps);
-    h.extend_from_slice(&[0, 0, 0, 1]);
-    h.extend_from_slice(pps);
-    Some(h)
-}
-
 /// Audio continuo de todo el clip: cada trozo va donde dice su tiempo y los huecos quedan en silencio.
 fn audio_continuo(clip: &Clip, volumen: f32) -> Vec<i16> {
     let cuadros = ((clip.fin - clip.inicio) * FRECUENCIA_AUDIO as i64 / SEGUNDO).max(0) as usize;
@@ -111,7 +72,7 @@ unsafe fn muestra_de(bytes: &[u8], tiempo: i64, duracion: i64) -> Result<IMFSamp
 /// Escribe el clip en `ruta`. `volumen` multiplica el audio (None = sin pista de audio).
 pub fn escribir(ruta: &Path, clip: &Clip, volumen: Option<f32>) -> Result<()> {
     let primero = clip.video.first().ok_or_else(|| anyhow!("el clip está vacío"))?;
-    let encabezado = encabezado_h264(&primero.datos).ok_or_else(|| anyhow!("el primer cuadro no trae SPS/PPS"))?;
+    let encabezado = super::h264::encabezado(&primero.datos).ok_or_else(|| anyhow!("el primer cuadro no trae SPS/PPS"))?;
     let f = &clip.formato;
     unsafe {
         let mut atributos = None;

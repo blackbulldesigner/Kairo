@@ -45,6 +45,9 @@ Ver `README.md` para el plan por fases.
 ## Probar
 
 - No hay ffprobe: `--prueba-grabar` y `--prueba-leer` (feature `dev`) graban y verifican un MP4 de verdad.
+- Caminos que esta PC no usa sola (escritorio con una NVIDIA): `KAIRO_CAPTURA=respaldo` fuerza Windows Graphics
+  Capture y `KAIRO_PROCESADOR=1` el encoder por procesador. Sirven también para diagnosticar en otra PC.
+- Las pruebas graban la pantalla real: borrar los clips y las imágenes de prueba al terminar.
 - Para hablarle a la grabadora desde PowerShell con `FindWindow`, pasar `[NullString]::Value` como título:
   `$null` se convierte en texto vacío y no la encuentra.
 - Mientras alguien prueba el exe de `target\release`, compilar solo en debug (o `cargo check --release`).

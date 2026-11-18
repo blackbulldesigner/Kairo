@@ -76,7 +76,7 @@ pub struct App {
     ahora: f64,
     captura: Option<Pedido>,
     /// Lo que informa la grabadora (se relee cada segundo). None = la grabadora está cerrada.
-    estado: Option<Estado>,
+    pub(super) estado: Option<Estado>,
     proxima_lectura: f64,
     /// Se le pidió a la grabadora que suelte los atajos (mientras se elige uno nuevo).
     atajos_suspendidos: bool,
@@ -148,7 +148,8 @@ impl App {
             Some(e) if e.grabando => {
                 let seg = crate::config::texto_duracion(self.guardada.segundos);
                 let tecla = atajo.map(|a| format!(" · {a} guarda")).unwrap_or_default();
-                (VERDE, "Grabando".into(), format!("Últimos {seg}{tecla}"), false)
+                let ahorro = if e.ahorro { "\nAhorro con batería: 720p, Ligera" } else { "" };
+                (VERDE, "Grabando".into(), format!("Últimos {seg}{tecla}{ahorro}"), false)
             }
             Some(e) => match &e.error {
                 Some(err) => (ROJO, "No puede grabar".into(), err.clone(), false),

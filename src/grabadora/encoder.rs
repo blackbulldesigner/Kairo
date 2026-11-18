@@ -13,6 +13,7 @@ use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::CoTaskMemFree;
 
 use super::buffer::PaqueteVideo;
+use super::h264;
 use super::reloj::SEGUNDO;
 
 pub struct Encoder {
@@ -27,7 +28,7 @@ pub struct Encoder {
     pedidos: u32,
 }
 
-fn tamano(a: u32, b: u32) -> u64 {
+pub(super) fn tamano(a: u32, b: u32) -> u64 {
     ((a as u64) << 32) | b as u64
 }
 
@@ -174,11 +175,15 @@ impl Encoder {
         }
     }
 
-    /// Le da un cuadro al encoder si lo está pidiendo. Devuelve false si estaba ocupado (el cuadro se
-    /// salta: es mejor que trabar la captura).
-    pub fn enviar(&mut self, textura: &ID3D11Texture2D, pts: i64) -> Result<bool> {
+    /// ¿Está pidiendo un cuadro? Si no, el cuadro espera en la cola de la grabadora.
+    pub fn puede_recibir(&self) -> bool {
+        self.pedidos > 0
+    }
+
+    /// Le da un cuadro al encoder (solo si lo está pidiendo: ver `puede_recibir`).
+    pub fn enviar(&mut self, textura: &ID3D11Texture2D, pts: i64) -> Result<()> {
         if self.pedidos == 0 {
-            return Ok(false);
+            bail!("el encoder no pidió un cuadro");
         }
         unsafe {
             let buffer = MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, textura, 0, false)?;
@@ -194,48 +199,81 @@ impl Encoder {
             self.mft.ProcessInput(0, &muestra, 0)?;
         }
         self.pedidos -= 1;
-        Ok(true)
+        Ok(())
     }
 
     unsafe fn sacar(&mut self, salida: &mut Vec<PaqueteVideo>) -> Result<()> {
-        let info = self.mft.GetOutputStreamInfo(0)?;
-        let provee = info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0) as u32 != 0;
-        let muestra = if provee {
-            None
-        } else {
-            let m = MFCreateSample()?;
-            m.AddBuffer(&MFCreateMemoryBuffer(info.cbSize.max(1024 * 1024))?)?;
-            Some(m)
-        };
-        let mut datos = [MFT_OUTPUT_DATA_BUFFER { dwStreamID: 0, pSample: ManuallyDrop::new(muestra), dwStatus: 0, pEvents: ManuallyDrop::new(None) }];
-        let mut estado = 0u32;
-        let r = self.mft.ProcessOutput(0, &mut datos, &mut estado);
-        let muestra = ManuallyDrop::take(&mut datos[0].pSample);
-        ManuallyDrop::drop(&mut datos[0].pEvents);
-        match r {
-            Ok(()) => {}
-            Err(e) if e.code() == MF_E_TRANSFORM_STREAM_CHANGE => {
-                // El encoder cambió algo de su salida (suele pasar al principio): se acepta lo que propone.
-                let t = self.mft.GetOutputAvailableType(0, 0)?;
-                self.mft.SetOutputType(0, &t, 0)?;
-                return Ok(());
-            }
-            Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(()),
-            Err(e) => return Err(e.into()),
+        if let Salida::Paquete(p) = sacar_paquete(&self.mft, self.dur)? {
+            salida.push(p);
         }
-        let Some(m) = muestra else { return Ok(()) };
-        let pts = m.GetSampleTime()?;
-        let dur = m.GetSampleDuration().unwrap_or(self.dur);
-        let clave = m.GetUINT32(&MFSampleExtension_CleanPoint).unwrap_or(0) != 0;
-        let buffer = m.ConvertToContiguousBuffer()?;
-        let mut p = std::ptr::null_mut();
-        let mut largo = 0u32;
-        buffer.Lock(&mut p, None, Some(&mut largo))?;
-        let bytes = std::slice::from_raw_parts(p, largo as usize).to_vec();
-        buffer.Unlock()?;
-        salida.push(PaqueteVideo { pts, dur, clave, datos: std::sync::Arc::new(bytes) });
         Ok(())
     }
+}
+
+/// Lo que devuelve un encoder cuando se le pide salida.
+pub(super) enum Salida {
+    Paquete(PaqueteVideo),
+    /// Cambió su formato de salida (ya se aceptó): hay que volver a pedir.
+    Reintentar,
+    /// No tiene nada más hasta recibir otro cuadro.
+    NadaMas,
+}
+
+/// Saca un paquete del encoder (sirve para el de hardware y el de procesador). Los cuadros clave
+/// salen siempre con SPS/PPS: si el encoder no los pone, se agregan desde su formato de salida, así
+/// un clip puede empezar en cualquier cuadro clave.
+pub(super) unsafe fn sacar_paquete(mft: &IMFTransform, dur_por_defecto: i64) -> Result<Salida> {
+    let info = mft.GetOutputStreamInfo(0)?;
+    let provee = info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0) as u32 != 0;
+    let muestra = if provee {
+        None
+    } else {
+        let m = MFCreateSample()?;
+        m.AddBuffer(&MFCreateMemoryBuffer(info.cbSize.max(1024 * 1024))?)?;
+        Some(m)
+    };
+    let mut datos = [MFT_OUTPUT_DATA_BUFFER { dwStreamID: 0, pSample: ManuallyDrop::new(muestra), dwStatus: 0, pEvents: ManuallyDrop::new(None) }];
+    let mut estado = 0u32;
+    let r = mft.ProcessOutput(0, &mut datos, &mut estado);
+    let muestra = ManuallyDrop::take(&mut datos[0].pSample);
+    ManuallyDrop::drop(&mut datos[0].pEvents);
+    match r {
+        Ok(()) => {}
+        Err(e) if e.code() == MF_E_TRANSFORM_STREAM_CHANGE => {
+            // El encoder cambió algo de su salida (suele pasar al principio): se acepta lo que propone.
+            let t = mft.GetOutputAvailableType(0, 0)?;
+            mft.SetOutputType(0, &t, 0)?;
+            return Ok(Salida::Reintentar);
+        }
+        Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(Salida::NadaMas),
+        Err(e) => return Err(e.into()),
+    }
+    let Some(m) = muestra else { return Ok(Salida::NadaMas) };
+    let pts = m.GetSampleTime()?;
+    let dur = m.GetSampleDuration().unwrap_or(dur_por_defecto);
+    let clave = m.GetUINT32(&MFSampleExtension_CleanPoint).unwrap_or(0) != 0;
+    let buffer = m.ConvertToContiguousBuffer()?;
+    let mut p = std::ptr::null_mut();
+    let mut largo = 0u32;
+    buffer.Lock(&mut p, None, Some(&mut largo))?;
+    let mut bytes = std::slice::from_raw_parts(p, largo as usize).to_vec();
+    buffer.Unlock()?;
+    if clave && !h264::tiene_encabezado(&bytes) {
+        if let Some(mut h) = encabezado_del_formato(mft) {
+            h.extend_from_slice(&bytes);
+            bytes = h;
+        }
+    }
+    Ok(Salida::Paquete(PaqueteVideo { pts, dur, clave, datos: std::sync::Arc::new(bytes) }))
+}
+
+/// SPS/PPS que el encoder anuncia en su formato de salida (si están en Annex B).
+unsafe fn encabezado_del_formato(mft: &IMFTransform) -> Option<Vec<u8>> {
+    let t = mft.GetOutputCurrentType(0).ok()?;
+    let n = t.GetBlobSize(&MF_MT_MPEG_SEQUENCE_HEADER).ok()? as usize;
+    let mut v = vec![0u8; n];
+    t.GetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &mut v, None).ok()?;
+    h264::es_annex_b(&v).then_some(v)
 }
 
 impl Drop for Encoder {
@@ -250,7 +288,7 @@ impl Drop for Encoder {
 }
 
 /// Colores BT.709 de rango limitado: lo que produce la conversión y lo que esperan los reproductores.
-unsafe fn color_bt709(t: &IMFMediaType) -> Result<()> {
+pub(super) unsafe fn color_bt709(t: &IMFMediaType) -> Result<()> {
     t.SetUINT32(&MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709.0 as u32)?;
     t.SetUINT32(&MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709.0 as u32)?;
     t.SetUINT32(&MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709.0 as u32)?;

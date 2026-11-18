@@ -15,6 +15,8 @@ pub struct Estado {
     /// Qué impide grabar (o qué atajo no se pudo registrar), dicho para la persona.
     pub error: Option<String>,
     pub ultimo_clip: Option<String>,
+    /// La laptop está con batería y se graba en 720p y calidad Ligera.
+    pub ahorro: bool,
 }
 
 fn archivo() -> std::path::PathBuf {
