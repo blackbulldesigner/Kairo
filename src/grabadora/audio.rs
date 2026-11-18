@@ -23,8 +23,17 @@ pub struct CapturaAudio {
     canales: usize,
     formato: Formato,
     remuestreo: Remuestreo,
-    /// Dónde termina lo último que se leyó (por si Windows no da la marca de tiempo).
-    fin_anterior: i64,
+    /// Posición (muestras de 48 kHz) donde tiene que empezar el próximo trozo para quedar pegado al anterior.
+    siguiente: Option<i64>,
+}
+
+/// Si el reloj y la cuenta de muestras difieren en más que esto (20 ms), hubo un hueco de verdad
+/// (Windows deja de mandar audio cuando no suena nada) o el reloj del dispositivo se corrió: se
+/// vuelve a ubicar por el reloj. Por debajo, la diferencia es solo el temblor de las marcas de tiempo.
+const TOLERANCIA: i64 = FRECUENCIA_AUDIO as i64 / 50;
+
+fn muestras_desde_reloj(t: i64) -> i64 {
+    (t as i128 * FRECUENCIA_AUDIO as i128 / 10_000_000) as i64
 }
 
 unsafe fn id_predeterminado(en: &IMMDeviceEnumerator) -> Result<(IMMDevice, String)> {
@@ -75,7 +84,7 @@ impl CapturaAudio {
             if canales == 0 {
                 bail!("la salida de audio no tiene canales");
             }
-            Ok(Self { cliente, captura, id, canales, formato, remuestreo: Remuestreo::new(frecuencia), fin_anterior: 0 })
+            Ok(Self { cliente, captura, id, canales, formato, remuestreo: Remuestreo::new(frecuencia), siguiente: None })
         }
     }
 
@@ -114,14 +123,23 @@ impl CapturaAudio {
                 }
                 self.captura.ReleaseBuffer(cuadros)?;
 
-                let error_de_tiempo = flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0;
-                let pts = if qpc == 0 || error_de_tiempo { self.fin_anterior } else { qpc as i64 };
                 let muestras: Vec<i16> =
                     self.remuestreo.procesar(&estereo).into_iter().map(|x| (x.clamp(-1.0, 1.0) * 32767.0) as i16).collect();
-                self.fin_anterior = pts + n as i64 * 10_000_000 / self.remuestreo.de as i64;
-                if !muestras.is_empty() {
-                    salida.push(TrozoAudio { pts, muestras: Arc::new(muestras) });
+                if muestras.is_empty() {
+                    continue;
                 }
+                // Dónde va este trozo: pegado al anterior, salvo que el reloj diga que hubo un hueco real.
+                let error_de_tiempo = qpc == 0 || flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0;
+                let por_reloj = (!error_de_tiempo).then(|| muestras_desde_reloj(qpc as i64));
+                let posicion = match (self.siguiente, por_reloj) {
+                    (Some(s), Some(r)) if (r - s).abs() <= TOLERANCIA => s,
+                    (Some(s), None) => s,
+                    (_, Some(r)) => r,
+                    (None, None) => muestras_desde_reloj(super::reloj::ahora()),
+                };
+                self.siguiente = Some(posicion + (muestras.len() / 2) as i64);
+                let pts = (posicion as i128 * 10_000_000 / FRECUENCIA_AUDIO as i128) as i64;
+                salida.push(TrozoAudio { pts, posicion, muestras: Arc::new(muestras) });
             }
         }
     }

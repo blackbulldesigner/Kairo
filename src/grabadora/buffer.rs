@@ -23,6 +23,10 @@ pub struct PaqueteVideo {
 #[derive(Clone)]
 pub struct TrozoAudio {
     pub pts: i64,
+    /// Dónde empieza, en muestras de 48 kHz desde el origen del reloj. Los trozos seguidos tienen
+    /// posiciones exactamente contiguas: ubicarlos por `pts` (que tiembla un poco) deja huecos y
+    /// solapes de unas muestras que suenan como estática.
+    pub posicion: i64,
     /// 48 kHz, estéreo intercalado, 16 bits.
     pub muestras: Arc<Vec<i16>>,
 }

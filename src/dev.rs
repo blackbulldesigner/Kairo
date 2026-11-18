@@ -18,7 +18,8 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     let pos = |f: &str| args.iter().position(|a| a == f);
     if let Some(k) = pos("--prueba-grabar") {
         let segundos: u32 = args.get(k + 1)?.parse().ok()?;
-        return Some(informar(prueba_grabar(segundos, args.get(k + 2)?)));
+        let tono = args.get(k + 3).is_some_and(|a| a == "tono");
+        return Some(informar(prueba_grabar(segundos, args.get(k + 2)?, tono)));
     }
     if let Some(k) = pos("--prueba-leer") {
         return Some(informar(prueba_leer(args.get(k + 1)?, args.get(k + 2).map(|s| s.as_str()))));
@@ -45,13 +46,15 @@ fn iniciar_mf() -> Result<()> {
     Ok(())
 }
 
-fn prueba_grabar(segundos: u32, ruta: &str) -> Result<()> {
+fn prueba_grabar(segundos: u32, ruta: &str, tono: bool) -> Result<()> {
     iniciar_mf()?;
     let mut cfg = Config::cargar();
     cfg.segundos = segundos;
     let g = Grabadora::iniciar(&cfg);
     std::thread::sleep(Duration::from_millis(segundos as u64 * 500));
-    sonido::guardado(); // para comprobar que el audio queda en el clip
+    if tono {
+        sonido::guardado(); // para comprobar que el audio queda en el clip
+    }
     std::thread::sleep(Duration::from_millis(segundos as u64 * 500 + 1500));
     let info = g.info.lock().map(|i| i.clone()).unwrap_or_default();
     println!("grabando: {} · {} · error: {:?}", info.grabando, info.detalle, info.error);

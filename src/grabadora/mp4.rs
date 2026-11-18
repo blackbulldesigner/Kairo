@@ -60,8 +60,20 @@ fn encabezado_h264(datos: &[u8]) -> Option<Vec<u8>> {
 fn audio_continuo(clip: &Clip, volumen: f32) -> Vec<i16> {
     let cuadros = ((clip.fin - clip.inicio) * FRECUENCIA_AUDIO as i64 / SEGUNDO).max(0) as usize;
     let mut pcm = vec![0i16; cuadros * 2];
+    // Diagnóstico: cuántos trozos no empiezan justo donde terminó el anterior (huecos o solapes).
+    let (mut cortes, mut mayor, mut fin_anterior) = (0usize, 0i64, None::<i64>);
+    // Todo en muestras enteras: el inicio del clip se convierte una sola vez, así los trozos contiguos
+    // quedan contiguos también en el archivo.
+    let base = (clip.inicio as i128 * FRECUENCIA_AUDIO as i128 / SEGUNDO as i128) as i64;
     for t in &clip.audio {
-        let desde = ((t.pts - clip.inicio) as i128 * FRECUENCIA_AUDIO as i128 / SEGUNDO as i128) as i64;
+        let desde = t.posicion - base;
+        if let Some(f) = fin_anterior {
+            if desde != f {
+                cortes += 1;
+                mayor = mayor.max((desde - f).abs());
+            }
+        }
+        fin_anterior = Some(desde + (t.muestras.len() / 2) as i64);
         for (k, par) in t.muestras.chunks_exact(2).enumerate() {
             let i = desde + k as i64;
             if i < 0 {
@@ -75,6 +87,10 @@ fn audio_continuo(clip: &Clip, volumen: f32) -> Vec<i16> {
             pcm[i * 2 + 1] = (par[1] as f32 * volumen).clamp(-32768.0, 32767.0) as i16;
         }
     }
+    crate::registro::log(&format!(
+        "audio del clip: {} trozos, {cortes} no son continuos (el mayor, {mayor} muestras)",
+        clip.audio.len()
+    ));
     pcm
 }
 
