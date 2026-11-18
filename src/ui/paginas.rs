@@ -329,7 +329,7 @@ impl App {
     }
 
     pub(super) fn pagina_clips(&mut self, ui: &mut Ui) {
-        encabezado(ui, "Clips", "Dónde se guardan tus clips.");
+        encabezado(ui, "Guardado", "Dónde y cómo se guardan tus clips.");
         tarjeta(ui, "Carpeta", |ui| {
             let ruta = self.cfg.carpeta.display().to_string();
             let libre = config::espacio_libre(&self.cfg.carpeta)

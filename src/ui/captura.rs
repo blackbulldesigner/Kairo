@@ -43,7 +43,8 @@ impl Pedido {
         ctx.request_repaint();
         self.cuadros += 1;
         if !self.pedida {
-            if listo && self.cuadros >= 8 {
+            // Como mucho unos 10 s esperando (por ejemplo, miniaturas que tardan).
+            if (listo && self.cuadros >= 8) || self.cuadros >= 600 {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
                 self.pedida = true;
             }

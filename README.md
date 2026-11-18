@@ -8,11 +8,12 @@ PCs de escritorio.
 > últimos segundos con F9, con el sonido del sistema. Funciona también en laptops con dos tarjetas
 > (captura de respaldo), en tarjetas sin encoder (por procesador) y baja la calidad con batería.
 > Detecta el juego, puede grabar solo el juego y separa el audio del juego, del resto del sistema y
-> del micrófono, y graba aparte los programas que elijas (Discord, música…). Próximo: biblioteca de clips.
+> del micrófono, y graba aparte los programas que elijas (Discord, música…). Tiene biblioteca de clips.
+> Próximo: editor y recorte de clips.
 
 ## Cómo se usa
 
-- Abre `kairo.exe`: aparece el ícono de Kairo junto al reloj y se abren los ajustes.
+- Abre `kairo.exe`: aparece el ícono de Kairo junto al reloj y se abre la ventana de Kairo en la Biblioteca.
 - **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto.
 - Clic derecho en el ícono: guardar, pausar, abrir la carpeta de clips, ajustes y salir.
 - En Sistema puedes activar **Iniciar con Windows**.
@@ -63,9 +64,13 @@ proceso aparte que solo existe mientras está abierta. Se comunican con mensajes
 - [x] **Fase 3b: audio por programa.** "Otros sonidos": todo lo demás, o solo los programas que elijas con "+"
   (Discord, música…), cada uno con su volumen y su pista. Cada clip guarda al lado un archivo oculto
   (`clip.mp4.kairo`) con el juego y los nombres de las pistas, para la biblioteca y el editor.
-- [ ] **Fase 4: biblioteca de clips.** Ver los clips dentro de Kairo (miniaturas, filtro por juego, reproductor),
-  en la ventana de ajustes: no pesa nada mientras juegas.
-- [ ] **Fase 5: extras.** Editor y recorte de clips, actualizaciones verificadas y firma digital.
+- [x] **Fase 4: biblioteca de clips.** Cuadrícula con miniatura, duración, juego, tamaño y fecha; filtro por juego,
+  búsqueda y orden; abrir, mostrar en la carpeta, renombrar y mandar a la Papelera. Las miniaturas se generan en
+  segundo plano y quedan en caché (`%APPDATA%\Kairo\miniaturas`). Vive en la ventana de Kairo: no pesa nada
+  mientras juegas.
+- [ ] **Fase 5: editor.** Reproductor dentro de Kairo, recorte y exportar sin recodificar, y quitar pistas
+  (por ejemplo, Discord) usando los datos de cada clip.
+- [ ] **Fase 6: extras.** Actualizaciones verificadas, instalador y firma digital.
 
 **Cómo medimos "no afecta los FPS":** mismo juego, misma escena, laptop conectada al cargador y 3 corridas por
 caso: sin grabar, con Medal, con Kairo y con la grabadora de NVIDIA o AMD. Se anotan FPS promedio, "1 % low" y
@@ -105,6 +110,8 @@ cuenta cuadros, mide el audio y guarda la imagen del cuadro del medio.
 - Ajustes: `%APPDATA%\Kairo\config.json`
 - Estado de la grabadora: `%APPDATA%\Kairo\estado.json`
 - Registro (para entender fallas): `%APPDATA%\Kairo\kairo.log`
+- Miniaturas de la biblioteca: `%APPDATA%\Kairo\miniaturas`
+- Datos de cada clip (juego y pistas): `clip.mp4.kairo`, oculto al lado del video
 - Clips: `Videos\Kairo` (se puede cambiar en la página Clips)
 
 ## Licencia

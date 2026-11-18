@@ -15,22 +15,25 @@ use crate::estado::{self, Estado};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pagina {
+    Biblioteca,
     Grabacion,
     Audio,
-    Clips,
+    Guardado,
     Atajos,
     Sistema,
     AcercaDe,
 }
 
 impl Pagina {
-    pub const TODAS: [Pagina; 6] = [Pagina::Grabacion, Pagina::Audio, Pagina::Clips, Pagina::Atajos, Pagina::Sistema, Pagina::AcercaDe];
+    pub const TODAS: [Pagina; 7] =
+        [Pagina::Biblioteca, Pagina::Grabacion, Pagina::Audio, Pagina::Guardado, Pagina::Atajos, Pagina::Sistema, Pagina::AcercaDe];
 
     pub fn nombre(self) -> &'static str {
         match self {
+            Pagina::Biblioteca => "Biblioteca",
             Pagina::Grabacion => "Grabación",
             Pagina::Audio => "Audio",
-            Pagina::Clips => "Clips",
+            Pagina::Guardado => "Guardado",
             Pagina::Atajos => "Atajos",
             Pagina::Sistema => "Sistema",
             Pagina::AcercaDe => "Acerca de",
@@ -39,9 +42,10 @@ impl Pagina {
 
     fn icono(self) -> &'static str {
         match self {
+            Pagina::Biblioteca => icono::CLIPS,
             Pagina::Grabacion => icono::VIDEO,
             Pagina::Audio => icono::MICROFONO,
-            Pagina::Clips => icono::CLIPS,
+            Pagina::Guardado => icono::CARPETA_ABIERTA,
             Pagina::Atajos => icono::TECLADO,
             Pagina::Sistema => icono::AJUSTES,
             Pagina::AcercaDe => icono::INFO,
@@ -52,8 +56,9 @@ impl Pagina {
     pub fn desde(s: &str) -> Option<Pagina> {
         match s.to_lowercase().as_str() {
             "grabacion" | "grabación" => Some(Pagina::Grabacion),
+            "biblioteca" => Some(Pagina::Biblioteca),
             "audio" => Some(Pagina::Audio),
-            "clips" => Some(Pagina::Clips),
+            "guardado" | "clips" => Some(Pagina::Guardado),
             "atajos" => Some(Pagina::Atajos),
             "sistema" => Some(Pagina::Sistema),
             "acerca" => Some(Pagina::AcercaDe),
@@ -85,6 +90,9 @@ pub struct App {
     /// Programas abiertos (para elegir el juego a mano) y cuándo volver a leerlos.
     pub(super) programas: Vec<crate::grabadora::juego::Programa>,
     pub(super) programas_hasta: f64,
+    pub(super) biblioteca: super::biblioteca::Biblioteca,
+    /// Último clip que avisó la grabadora (si cambia, la biblioteca se vuelve a leer enseguida).
+    ultimo_clip_visto: Option<String>,
 }
 
 impl App {
@@ -117,7 +125,7 @@ impl App {
                 cfg.programas_audio = vec![crate::config::ProgramaAudio { exe: p.exe, nombre: p.nombre, activa: true, volumen: 80 }];
             }
         }
-        let pagina = captura.as_ref().map(|c| c.pagina).unwrap_or(Pagina::Grabacion);
+        let pagina = captura.as_ref().map(|c| c.pagina).unwrap_or(Pagina::Biblioteca);
         Self {
             pagina,
             guardada: cfg.clone(),
@@ -134,6 +142,8 @@ impl App {
             alto_estado: 64.0,
             programas: Vec::new(),
             programas_hasta: 0.0,
+            biblioteca: super::biblioteca::Biblioteca::new(&cc.egui_ctx),
+            ultimo_clip_visto: None,
         }
     }
 
@@ -321,11 +331,25 @@ impl eframe::App for App {
         self.sincronizar_atajos();
         self.leer_estado(ctx);
         let equipo = self.equipo.lock().ok().and_then(|e| e.clone());
+        let nuevo_clip = self.estado.as_ref().and_then(|e| e.ultimo_clip.clone());
+        if nuevo_clip.is_some() && nuevo_clip != self.ultimo_clip_visto {
+            self.ultimo_clip_visto = nuevo_clip;
+            self.biblioteca.escanear_ya();
+        }
+        if self.pagina == Pagina::Biblioteca {
+            let carpeta = self.guardada.carpeta.clone();
+            self.biblioteca.actualizar(&carpeta, self.ahora, ctx);
+        }
 
-        TopBottomPanel::bottom("pie")
-            .exact_height(58.0)
-            .frame(Frame::none().fill(PANEL).inner_margin(Margin::symmetric(20.0, 0.0)))
-            .show(ctx, |ui| self.pie(ui));
+        // En la Biblioteca no hay nada que guardar: el pie solo aparece si quedaron cambios de otra página
+        // (o un aviso, como "se mandó a la Papelera").
+        let con_aviso = self.aviso.as_ref().is_some_and(|(_, _, hasta)| self.ahora < *hasta);
+        if self.pagina != Pagina::Biblioteca || self.cfg != self.guardada || con_aviso {
+            TopBottomPanel::bottom("pie")
+                .exact_height(58.0)
+                .frame(Frame::none().fill(PANEL).inner_margin(Margin::symmetric(20.0, 0.0)))
+                .show(ctx, |ui| self.pie(ui));
+        }
 
         SidePanel::left("menu")
             .exact_width(214.0)
@@ -339,16 +363,19 @@ impl eframe::App for App {
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     // Columna de hasta 960 puntos, centrada si sobra lugar (ventana grande).
                     let ancho = ui.available_width();
-                    let contenido = ancho.min(960.0);
+                    // La biblioteca aprovecha más ancho (más columnas de clips).
+                    let maximo = if self.pagina == Pagina::Biblioteca { 1500.0 } else { 960.0 };
+                    let contenido = ancho.min(maximo);
                     let margen = ((ancho - contenido) / 2.0).floor().max(0.0);
                     ui.horizontal_top(|ui| {
                         ui.add_space(margen);
                         ui.vertical(|ui| {
                             ui.set_width(contenido);
                             match self.pagina {
+                                Pagina::Biblioteca => self.pagina_biblioteca(ui),
                                 Pagina::Grabacion => self.pagina_grabacion(ui, equipo.as_ref()),
                                 Pagina::Audio => self.pagina_audio(ui, equipo.as_ref()),
-                                Pagina::Clips => self.pagina_clips(ui),
+                                Pagina::Guardado => self.pagina_clips(ui),
                                 Pagina::Atajos => self.pagina_atajos(ui),
                                 Pagina::Sistema => self.pagina_sistema(ui, equipo.as_ref()),
                                 Pagina::AcercaDe => self.pagina_acerca(ui),
@@ -361,7 +388,8 @@ impl eframe::App for App {
         );
 
         if let Some(c) = &mut self.captura {
-            c.paso(ctx, equipo.is_some());
+            let listo = equipo.is_some() && (self.pagina != Pagina::Biblioteca || self.biblioteca.pendientes() == 0);
+            c.paso(ctx, listo);
         }
     }
 

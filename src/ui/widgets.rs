@@ -314,6 +314,23 @@ pub fn boton(ui: &mut Ui, icono: Option<&str>, texto: &str, estilo: Estilo, acti
     }
 }
 
+/// Píldora seleccionable (filtros).
+pub fn chip(ui: &mut Ui, texto: &str, seleccionado: bool) -> Response {
+    let g = medir(ui, texto, FontId::proportional(12.5));
+    let (rect, resp) = ui.allocate_exact_size(vec2(g.size().x + 24.0, 28.0), Sense::click());
+    let hover = resp.hovered();
+    let (fondo, borde, color) = if seleccionado {
+        (SELECCION, ACENTO, TEXTO_SEL)
+    } else if hover {
+        (BOTON_HOVER, BOTON_BORDE, TEXTO)
+    } else {
+        (BOTON, BORDE, NAV)
+    };
+    ui.painter().rect(rect, 14.0, fondo, Stroke::new(1.0_f32, borde));
+    ui.painter().galley(pos2(rect.left() + 12.0, rect.center().y - g.size().y / 2.0), g, color);
+    resp.on_hover_cursor(CursorIcon::PointingHand)
+}
+
 /// Botón chico con solo un ícono (y un texto al pasar el mouse).
 pub fn boton_icono(ui: &mut Ui, icono: &str, ayuda: &str) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());

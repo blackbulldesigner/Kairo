@@ -2,7 +2,9 @@
 //! así que no pesa nada mientras juegas.
 
 mod app;
+pub mod biblioteca;
 pub mod captura;
+mod pagina_biblioteca;
 mod paginas;
 pub mod tema;
 mod ventana;
