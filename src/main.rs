@@ -11,6 +11,7 @@
 mod autoinicio;
 mod bandeja;
 mod config;
+mod datos_clip;
 #[cfg(feature = "dev")]
 mod dev;
 mod equipo;

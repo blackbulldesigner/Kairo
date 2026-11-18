@@ -1,7 +1,12 @@
 //! Pruebas sin ventana (solo con `--features dev`):
-//! - `--prueba-grabar <segundos> <archivo.mp4>`: graba, suena un tono a la mitad y guarda el clip.
-//! - `--prueba-leer <archivo.mp4> [cuadro.png]`: abre el MP4 como lo haría un reproductor, cuenta cuadros
-//!   y audio, y guarda una imagen del cuadro del medio.
+//! - `--prueba-grabar <segundos> <archivo.mp4> [tono] [juego] [solo-juego]`: graba y guarda el clip.
+//!   `tono` suena un tono a la mitad; `juego` hace que este mismo proceso sea "el juego" (el tono tiene
+//!   que quedar en la pista del juego y no en la del resto del sistema; activa las pistas separadas);
+//!   `solo-juego` graba en modo "Solo el juego"; `programa` suma este exe como programa elegido (el tono tiene
+//!   que quedar en su pista).
+//! - `--prueba-leer <archivo.mp4> [cuadro.png]`: abre el MP4 como lo haría un reproductor, cuenta cuadros,
+//!   mide cada pista de audio y guarda una imagen del cuadro del medio.
+//! - `--prueba-juego <segundos>`: muestra qué detecta como juego, dos veces por segundo.
 
 use std::path::Path;
 use std::time::Duration;
@@ -18,8 +23,23 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     let pos = |f: &str| args.iter().position(|a| a == f);
     if let Some(k) = pos("--prueba-grabar") {
         let segundos: u32 = args.get(k + 1)?.parse().ok()?;
-        let tono = args.get(k + 3).is_some_and(|a| a == "tono");
-        return Some(informar(prueba_grabar(segundos, args.get(k + 2)?, tono)));
+        let extra = |x: &str| args.iter().skip(k + 3).any(|a| a == x);
+        let opciones = Opciones { tono: extra("tono"), juego: extra("juego"), solo_juego: extra("solo-juego"), programa: extra("programa") };
+        return Some(informar(prueba_grabar(segundos, args.get(k + 2)?, opciones)));
+    }
+    if let Some(k) = pos("--prueba-juego") {
+        let segundos: u32 = args.get(k + 1).and_then(|s| s.parse().ok()).unwrap_or(5);
+        let mut d = crate::grabadora::juego::Detector::new(None);
+        println!("programas abiertos: {:?}", crate::grabadora::juego::programas_abiertos().iter().map(|p| &p.nombre).collect::<Vec<_>>());
+        for _ in 0..segundos * 2 {
+            d.revisar();
+            match d.juego() {
+                Some(j) => println!("juego: {} (pid {}) · adelante: {}", j.nombre, j.pid, d.al_frente()),
+                None => println!("sin juego"),
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        return Some(0);
     }
     if let Some(k) = pos("--prueba-leer") {
         return Some(informar(prueba_leer(args.get(k + 1)?, args.get(k + 2).map(|s| s.as_str()))));
@@ -46,10 +66,34 @@ fn iniciar_mf() -> Result<()> {
     Ok(())
 }
 
-fn prueba_grabar(segundos: u32, ruta: &str, tono: bool) -> Result<()> {
+struct Opciones {
+    tono: bool,
+    juego: bool,
+    solo_juego: bool,
+    programa: bool,
+}
+
+fn prueba_grabar(segundos: u32, ruta: &str, o: Opciones) -> Result<()> {
+    let Opciones { tono, juego, solo_juego, programa } = o;
     iniciar_mf()?;
     let mut cfg = Config::cargar();
     cfg.segundos = segundos;
+    if juego {
+        // Este proceso es "el juego": el tono sale de acá.
+        std::env::set_var("KAIRO_JUEGO_PID", std::process::id().to_string());
+        cfg.audio_juego.activa = true;
+        cfg.audio_sistema.activa = true;
+        cfg.pistas_separadas = true;
+    }
+    if solo_juego {
+        cfg.modo = crate::config::ModoCaptura::Juego;
+    }
+    if programa {
+        // Este exe es un "programa elegido": el tono tiene que quedar en su pista.
+        cfg.otros_sonidos = crate::config::OtrosSonidos::Elegidos;
+        cfg.programas_audio = vec![crate::config::ProgramaAudio { exe: "kairo.exe".into(), nombre: "Prueba".into(), activa: true, volumen: 100 }];
+        cfg.pistas_separadas = true;
+    }
     let g = Grabadora::iniciar(&cfg);
     std::thread::sleep(Duration::from_millis(segundos as u64 * 500));
     if tono {
@@ -57,7 +101,7 @@ fn prueba_grabar(segundos: u32, ruta: &str, tono: bool) -> Result<()> {
     }
     std::thread::sleep(Duration::from_millis(segundos as u64 * 500 + 1500));
     let info = g.info.lock().map(|i| i.clone()).unwrap_or_default();
-    println!("grabando: {} · {} · error: {:?}", info.grabando, info.detalle, info.error);
+    println!("grabando: {} · {} · juego: {:?} · error: {:?}", info.grabando, info.detalle, info.juego, info.error);
     println!("en el buffer: {:.1} s de video", g.segundos_en_buffer());
     let t = std::time::Instant::now();
     let r = g.guardador().guardar_en(&cfg, Path::new(ruta), segundos);
@@ -96,6 +140,7 @@ fn prueba_leer(ruta: &str, png: Option<&str>) -> Result<()> {
         let duracion = lector.GetPresentationAttribute(fuente, &MF_PD_DURATION).ok().and_then(|p| u64::try_from(&p).ok()).unwrap_or(0);
         println!("duración: {:.2} s", duracion as f64 / 1e7);
         let mut i = 0;
+        let mut pistas_audio = Vec::new();
         while let Ok(t) = lector.GetNativeMediaType(i, 0) {
             let mayor = guid_nombre(t.GetGUID(&MF_MT_MAJOR_TYPE)?);
             let sub = guid_nombre(t.GetGUID(&MF_MT_SUBTYPE)?);
@@ -111,12 +156,14 @@ fn prueba_leer(ruta: &str, png: Option<&str>) -> Result<()> {
                 )
             };
             println!("pista {i}: {mayor} {sub} {extra}");
+            if mayor == "audio" {
+                pistas_audio.push(i);
+            }
             i += 1;
         }
 
         // Video: decodificar todo, contar cuadros y guardar el del medio.
         let video = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
-        let audio = MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32;
         let rgb = MFCreateMediaType()?;
         rgb.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
         rgb.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
@@ -124,7 +171,9 @@ fn prueba_leer(ruta: &str, png: Option<&str>) -> Result<()> {
         let actual = lector.GetCurrentMediaType(video)?;
         let s = actual.GetUINT64(&MF_MT_FRAME_SIZE)?;
         let (w, h) = ((s >> 32) as usize, (s & 0xFFFF_FFFF) as usize);
-        let _ = lector.SetStreamSelection(audio, false);
+        for &k in &pistas_audio {
+            let _ = lector.SetStreamSelection(k, false);
+        }
         let mut cuadros = 0;
         let mut guardado = false;
         loop {
@@ -155,18 +204,25 @@ fn prueba_leer(ruta: &str, png: Option<&str>) -> Result<()> {
         }
         println!("cuadros de video decodificados: {cuadros}");
 
-        // Audio: decodificar a PCM y medir el volumen (para saber si no quedó en silencio).
+        // Audio: cada pista por separado, decodificada a PCM. Por ventanas de 100 ms: cuánto tiempo
+        // tiene sonido y dónde está lo más fuerte (para ver en qué pista quedó el tono de prueba).
         let pcm = MFCreateMediaType()?;
         pcm.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
         pcm.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_PCM)?;
         pcm.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)?;
-        if lector.SetStreamSelection(audio, true).is_ok() && lector.SetCurrentMediaType(audio, None, &pcm).is_ok() {
-            let _ = lector.SetStreamSelection(video, false);
+        if pistas_audio.is_empty() {
+            println!("sin pistas de audio");
+        }
+        for (n, &indice) in pistas_audio.iter().enumerate() {
+            for k in 0..i {
+                let _ = lector.SetStreamSelection(k, k == indice);
+            }
+            lector.SetCurrentMediaType(indice, None, &pcm)?;
             lector.SetCurrentPosition(&windows::core::GUID::zeroed(), &PROPVARIANT::from(0i64))?;
-            let (mut total, mut pico, mut suma) = (0usize, 0i32, 0f64);
+            let mut muestras: Vec<i16> = Vec::new();
             loop {
                 let (mut flags, mut muestra) = (0u32, None);
-                lector.ReadSample(audio, 0, None, Some(&mut flags), None, Some(&mut muestra))?;
+                lector.ReadSample(indice, 0, None, Some(&mut flags), None, Some(&mut muestra))?;
                 if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
                     break;
                 }
@@ -175,17 +231,22 @@ fn prueba_leer(ruta: &str, png: Option<&str>) -> Result<()> {
                 let mut p = std::ptr::null_mut();
                 let mut largo = 0u32;
                 b.Lock(&mut p, None, Some(&mut largo))?;
-                for s in std::slice::from_raw_parts(p as *const i16, largo as usize / 2) {
-                    pico = pico.max((*s as i32).abs());
-                    suma += (*s as f64) * (*s as f64);
-                    total += 1;
-                }
+                muestras.extend_from_slice(std::slice::from_raw_parts(p as *const i16, largo as usize / 2));
                 b.Unlock()?;
             }
-            let rms = (suma / total.max(1) as f64).sqrt();
-            println!("audio decodificado: {:.2} s, pico {pico}, RMS {rms:.0}", total as f64 / 2.0 / 48_000.0);
-        } else {
-            println!("sin pista de audio");
+            let ventana = 4_800 * 2; // 100 ms estéreo
+            let rms: Vec<f64> = muestras
+                .chunks(ventana)
+                .map(|c| (c.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>() / c.len().max(1) as f64).sqrt())
+                .collect();
+            let con_sonido = rms.iter().filter(|&&r| r > 300.0).count() as f64 / 10.0;
+            let (mayor_i, mayor) = rms.iter().enumerate().fold((0, 0.0f64), |a, (k, &r)| if r > a.1 { (k, r) } else { a });
+            let nombre = if n == 0 { "mezcla".to_string() } else { format!("pista {n}") };
+            println!(
+                "audio {nombre}: {:.2} s, con sonido {con_sonido:.1} s, lo más fuerte RMS {mayor:.0} a los {:.1} s",
+                muestras.len() as f64 / 2.0 / 48_000.0,
+                mayor_i as f64 / 10.0
+            );
         }
     }
     Ok(())

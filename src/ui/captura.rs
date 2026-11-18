@@ -9,6 +9,12 @@ use super::Pagina;
 
 pub struct Pedido {
     pub pagina: Pagina,
+    /// Tamaño de la ventana (por ejemplo "1700x950"), para ver la interfaz grande.
+    pub tamano: Option<[f32; 2]>,
+    /// "grabacion-juego": la página Grabación con "Solo el juego" puesto (sin guardarlo).
+    pub modo_juego: bool,
+    /// "audio-programas": la página Audio con "Solo los programas que elijas" (sin guardarlo).
+    pub programas: bool,
     ruta: PathBuf,
     cuadros: u32,
     pedida: bool,
@@ -19,9 +25,16 @@ pub fn desde_args(args: &[String]) -> Option<Pedido> {
         return None;
     }
     let i = args.iter().position(|a| a == "--captura-ui")?;
-    let pagina = Pagina::desde(args.get(i + 1)?)?;
+    let nombre = args.get(i + 1)?;
+    let modo_juego = nombre == "grabacion-juego";
+    let programas = nombre == "audio-programas";
+    let pagina = Pagina::desde(nombre.trim_end_matches("-juego").trim_end_matches("-programas"))?;
     let ruta = PathBuf::from(args.get(i + 2)?);
-    Some(Pedido { pagina, ruta, cuadros: 0, pedida: false })
+    let tamano = args.get(i + 3).and_then(|t| {
+        let (w, h) = t.split_once('x')?;
+        Some([w.parse().ok()?, h.parse().ok()?])
+    });
+    Some(Pedido { pagina, tamano, modo_juego, programas, ruta, cuadros: 0, pedida: false })
 }
 
 impl Pedido {

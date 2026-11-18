@@ -13,7 +13,7 @@ use windows::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
 /// Desde esta compilación (Windows 10 2004) se puede capturar el audio de un solo proceso.
-const COMPILACION_AUDIO_POR_PROCESO: u32 = 19041;
+pub const COMPILACION_AUDIO_POR_PROCESO: u32 = 19041;
 const NT: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
 const CPU: &str = r"HARDWARE\DESCRIPTION\System\CentralProcessor\0";
 
@@ -188,6 +188,11 @@ impl Equipo {
 fn texto_utf16(buf: &[u16]) -> String {
     let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     String::from_utf16_lossy(&buf[..n]).trim().to_string()
+}
+
+/// Número de compilación de Windows (19045 = Windows 10 22H2, 22000 o más = Windows 11).
+pub fn compilacion_windows() -> u32 {
+    reg_texto(NT, "CurrentBuildNumber").and_then(|s| s.parse().ok()).unwrap_or(0)
 }
 
 fn reg_texto(clave: &str, valor: &str) -> Option<String> {

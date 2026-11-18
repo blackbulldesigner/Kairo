@@ -110,6 +110,8 @@ fn cambia_la_grabacion(a: &Config, b: &Config) -> bool {
     let mut x = a.clone();
     x.carpeta = b.carpeta.clone();
     x.sonido_al_guardar = b.sonido_al_guardar;
+    x.carpeta_por_juego = b.carpeta_por_juego;
+    x.pistas_separadas = b.pistas_separadas;
     x.atajo_guardar = b.atajo_guardar.clone();
     x.atajo_pausa = b.atajo_pausa.clone();
     x.atajo_carpeta = b.atajo_carpeta.clone();
@@ -326,6 +328,7 @@ impl Bandeja {
             grabando: info.grabando && !self.pausado,
             pausado: self.pausado,
             detalle: info.detalle.clone(),
+            juego: info.juego.clone(),
             error: error.clone(),
             ultimo_clip: self.ultimo_clip.clone(),
             ahorro: self.ahorrando() && !self.pausado,

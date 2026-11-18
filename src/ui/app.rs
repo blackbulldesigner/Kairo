@@ -67,7 +67,7 @@ pub struct App {
     /// Lo que se está editando.
     pub(super) cfg: Config,
     /// Lo último guardado en disco (para saber si hay cambios).
-    guardada: Config,
+    pub(super) guardada: Config,
     equipo: Arc<Mutex<Option<Equipo>>>,
     /// Atajo que espera una tecla nueva.
     pub(super) capturando: Option<CualAtajo>,
@@ -82,11 +82,16 @@ pub struct App {
     atajos_suspendidos: bool,
     pub(super) autoinicio: bool,
     alto_estado: f32,
+    /// Programas abiertos (para elegir el juego a mano) y cuándo volver a leerlos.
+    pub(super) programas: Vec<crate::grabadora::juego::Programa>,
+    pub(super) programas_hasta: f64,
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, captura: Option<Pedido>) -> Self {
         tema::aplicar(&cc.egui_ctx);
+        // El zoom lo maneja Kairo según el tamaño de la ventana (ver `ajustar_zoom`).
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         super::ventana::barra_de_titulo_oscura(super::TITULO);
 
         let equipo = Arc::new(Mutex::new(None));
@@ -102,7 +107,16 @@ impl App {
             });
         }
 
-        let cfg = Config::cargar();
+        let mut cfg = Config::cargar();
+        if captura.as_ref().is_some_and(|c| c.modo_juego) {
+            cfg.modo = crate::config::ModoCaptura::Juego;
+        }
+        if captura.as_ref().is_some_and(|c| c.programas) {
+            cfg.otros_sonidos = crate::config::OtrosSonidos::Elegidos;
+            if let Some(p) = crate::grabadora::juego::programas_abiertos().into_iter().next() {
+                cfg.programas_audio = vec![crate::config::ProgramaAudio { exe: p.exe, nombre: p.nombre, activa: true, volumen: 80 }];
+            }
+        }
         let pagina = captura.as_ref().map(|c| c.pagina).unwrap_or(Pagina::Grabacion);
         Self {
             pagina,
@@ -118,6 +132,20 @@ impl App {
             atajos_suspendidos: false,
             autoinicio: crate::autoinicio::activo(),
             alto_estado: 64.0,
+            programas: Vec::new(),
+            programas_hasta: 0.0,
+        }
+    }
+
+    /// Con la ventana grande (por ejemplo, maximizada), todo crece: letras, controles y espacios.
+    /// Se calcula con el ancho sin zoom, así cambiar el zoom no vuelve a cambiar la cuenta.
+    fn ajustar_zoom(&self, ctx: &egui::Context) {
+        let nativo = ctx.input(|i| i.viewport().native_pixels_per_point).unwrap_or(1.0).max(0.1);
+        let ancho = ctx.screen_rect().width() * ctx.pixels_per_point() / nativo;
+        // En pasos de 5 %, para no cambiar a cada pixel mientras se arrastra el borde.
+        let zoom = ((ancho / 1600.0).clamp(1.0, 1.1) * 20.0).round() / 20.0;
+        if (zoom - ctx.zoom_factor()).abs() > 0.01 {
+            ctx.set_zoom_factor(zoom);
         }
     }
 
@@ -149,7 +177,8 @@ impl App {
                 let seg = crate::config::texto_duracion(self.guardada.segundos);
                 let tecla = atajo.map(|a| format!(" · {a} guarda")).unwrap_or_default();
                 let ahorro = if e.ahorro { "\nAhorro con batería: 720p, Ligera" } else { "" };
-                (VERDE, "Grabando".into(), format!("Últimos {seg}{tecla}{ahorro}"), false)
+                let juego = e.juego.as_ref().map(|j| format!("\nJuego: {j}")).unwrap_or_default();
+                (VERDE, "Grabando".into(), format!("Últimos {seg}{tecla}{juego}{ahorro}"), false)
             }
             Some(e) => match &e.error {
                 Some(err) => (ROJO, "No puede grabar".into(), err.clone(), false),
@@ -287,6 +316,7 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ahora = ctx.input(|i| i.time);
+        self.ajustar_zoom(ctx);
         self.leer_tecla_de_atajo(ctx);
         self.sincronizar_atajos();
         self.leer_estado(ctx);
@@ -307,17 +337,25 @@ impl eframe::App for App {
             ctx,
             |ui| {
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    // `set_max_width` fija el ancho (también lo agranda): nunca más que lo que hay.
-                    ui.set_max_width(ui.available_width().min(740.0));
-                    match self.pagina {
-                        Pagina::Grabacion => self.pagina_grabacion(ui, equipo.as_ref()),
-                        Pagina::Audio => self.pagina_audio(ui, equipo.as_ref()),
-                        Pagina::Clips => self.pagina_clips(ui),
-                        Pagina::Atajos => self.pagina_atajos(ui),
-                        Pagina::Sistema => self.pagina_sistema(ui, equipo.as_ref()),
-                        Pagina::AcercaDe => self.pagina_acerca(ui),
-                    }
-                    ui.add_space(12.0);
+                    // Columna de hasta 960 puntos, centrada si sobra lugar (ventana grande).
+                    let ancho = ui.available_width();
+                    let contenido = ancho.min(960.0);
+                    let margen = ((ancho - contenido) / 2.0).floor().max(0.0);
+                    ui.horizontal_top(|ui| {
+                        ui.add_space(margen);
+                        ui.vertical(|ui| {
+                            ui.set_width(contenido);
+                            match self.pagina {
+                                Pagina::Grabacion => self.pagina_grabacion(ui, equipo.as_ref()),
+                                Pagina::Audio => self.pagina_audio(ui, equipo.as_ref()),
+                                Pagina::Clips => self.pagina_clips(ui),
+                                Pagina::Atajos => self.pagina_atajos(ui),
+                                Pagina::Sistema => self.pagina_sistema(ui, equipo.as_ref()),
+                                Pagina::AcercaDe => self.pagina_acerca(ui),
+                            }
+                            ui.add_space(12.0);
+                        });
+                    });
                 });
             },
         );

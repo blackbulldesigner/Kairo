@@ -1,13 +1,31 @@
-//! Audio del sistema: todo lo que suena por la salida predeterminada (captura "loopback" de WASAPI).
-//! Se convierte a 48 kHz estéreo de 16 bits y se marca con el mismo reloj que el video.
+//! Captura de audio con WASAPI. Tres orígenes:
+//! - **Salida completa**: todo lo que suena por la salida predeterminada (loopback).
+//! - **Proceso**: solo lo que suena de un proceso y sus hijos (el juego), o todo menos eso (el resto
+//!   del sistema). Necesita Windows 10 2004 o más nuevo.
+//! - **Micrófono**: la entrada predeterminada.
+//!
+//! Todo se convierte a 48 kHz estéreo de 16 bits y se marca con el mismo reloj que el video.
 
+use std::sync::mpsc;
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use windows::core::{implement, Interface, IUnknown, HRESULT, PROPVARIANT};
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Media::Audio::*;
 use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_ALL};
+use windows::Win32::System::Threading::CreateEventW;
 
 use super::buffer::{TrozoAudio, FRECUENCIA_AUDIO};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Origen {
+    SalidaCompleta,
+    /// `incluir`: solo ese proceso (y sus hijos); si no, todo menos ese proceso.
+    Proceso { pid: u32, incluir: bool },
+    Microfono,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Formato {
@@ -19,12 +37,14 @@ enum Formato {
 pub struct CapturaAudio {
     cliente: IAudioClient,
     captura: IAudioCaptureClient,
+    /// Dispositivo usado (para notar si la persona cambió el predeterminado). Vacío en la captura por proceso.
     id: String,
     canales: usize,
     formato: Formato,
     remuestreo: Remuestreo,
     /// Posición (muestras de 48 kHz) donde tiene que empezar el próximo trozo para quedar pegado al anterior.
     siguiente: Option<i64>,
+    evento: Option<HANDLE>,
 }
 
 /// Si el reloj y la cuenta de muestras difieren en más que esto (20 ms), hubo un hueco de verdad
@@ -36,55 +56,163 @@ fn muestras_desde_reloj(t: i64) -> i64 {
     (t as i128 * FRECUENCIA_AUDIO as i128 / 10_000_000) as i64
 }
 
-unsafe fn id_predeterminado(en: &IMMDeviceEnumerator) -> Result<(IMMDevice, String)> {
-    let disp = en.GetDefaultAudioEndpoint(eRender, eConsole)?;
+unsafe fn predeterminado(en: &IMMDeviceEnumerator, flujo: EDataFlow) -> Result<(IMMDevice, String)> {
+    let disp = en.GetDefaultAudioEndpoint(flujo, eConsole)?;
     let p = disp.GetId()?;
     let id = p.to_string().unwrap_or_default();
     CoTaskMemFree(Some(p.0 as *const _));
     Ok((disp, id))
 }
 
-/// El id de la salida de audio predeterminada ahora (para notar si la persona cambió de auriculares).
-pub fn salida_predeterminada() -> Option<String> {
+/// El id del dispositivo predeterminado ahora (para notar si la persona cambió de auriculares o de micrófono).
+pub fn dispositivo_predeterminado(origen: Origen) -> Option<String> {
+    let flujo = match origen {
+        Origen::SalidaCompleta => eRender,
+        Origen::Microfono => eCapture,
+        Origen::Proceso { .. } => return None,
+    };
     unsafe {
         let en: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-        id_predeterminado(&en).ok().map(|(_, id)| id)
+        predeterminado(&en, flujo).ok().map(|(_, id)| id)
     }
 }
 
+/// Avisa cuando Windows termina de activar la captura por proceso.
+#[implement(IActivateAudioInterfaceCompletionHandler)]
+struct Activado(mpsc::SyncSender<()>);
+
+impl IActivateAudioInterfaceCompletionHandler_Impl for Activado_Impl {
+    fn ActivateCompleted(&self, _operacion: Option<&IActivateAudioInterfaceAsyncOperation>) -> windows::core::Result<()> {
+        let _ = self.0.send(());
+        Ok(())
+    }
+}
+
+/// PROPVARIANT de tipo VT_BLOB, armado a mano (es lo que pide la activación por proceso).
+#[repr(C)]
+struct VarianteBlob {
+    tipo: u16,
+    reservado: [u16; 3],
+    tamano: u32,
+    datos: *const u8,
+}
+
+const VT_BLOB: u16 = 65;
+
+/// Cliente de audio que captura un solo proceso (o todo menos él).
+unsafe fn cliente_de_proceso(pid: u32, incluir: bool) -> Result<IAudioClient> {
+    let params = AUDIOCLIENT_ACTIVATION_PARAMS {
+        ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+        Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
+            ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+                TargetProcessId: pid,
+                ProcessLoopbackMode: if incluir {
+                    PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE
+                } else {
+                    PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE
+                },
+            },
+        },
+    };
+    let blob = VarianteBlob {
+        tipo: VT_BLOB,
+        reservado: [0; 3],
+        tamano: std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32,
+        datos: &params as *const _ as *const u8,
+    };
+    let (tx, rx) = mpsc::sync_channel(1);
+    let aviso: IActivateAudioInterfaceCompletionHandler = Activado(tx).into();
+    let operacion = ActivateAudioInterfaceAsync(
+        VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+        &IAudioClient::IID,
+        Some(&blob as *const VarianteBlob as *const PROPVARIANT),
+        &aviso,
+    )
+    .context("Windows no tiene captura de audio por proceso")?;
+    // Se espera poco: si Windows no contesta, se sigue sin este audio y se reintenta más tarde.
+    rx.recv_timeout(Duration::from_secs(2)).map_err(|_| anyhow!("la captura de audio por proceso no respondió"))?;
+    let mut resultado = HRESULT(0);
+    let mut interfaz: Option<IUnknown> = None;
+    operacion.GetActivateResult(&mut resultado, &mut interfaz)?;
+    resultado.ok()?;
+    Ok(interfaz.ok_or_else(|| anyhow!("sin cliente de audio"))?.cast()?)
+}
+
+/// Lee el formato de mezcla de un dispositivo: (formato, canales, frecuencia).
+unsafe fn leer_formato(fmt: *const WAVEFORMATEX) -> Result<(Formato, usize, u32)> {
+    let w = std::ptr::read_unaligned(fmt);
+    let (etiqueta, canales, frecuencia, bits) = (w.wFormatTag, w.nChannels as usize, w.nSamplesPerSec, w.wBitsPerSample);
+    // 0xFFFE = WAVEFORMATEXTENSIBLE: el tipo real está en SubFormat (1 = PCM, 3 = float).
+    let tipo = if etiqueta == 0xFFFE {
+        std::ptr::read_unaligned(fmt as *const WAVEFORMATEXTENSIBLE).SubFormat.data1 as u16
+    } else {
+        etiqueta
+    };
+    let formato = match (tipo, bits) {
+        (3, 32) => Formato::F32,
+        (1, 16) => Formato::I16,
+        (1, 32) => Formato::I32,
+        _ => bail!("formato de audio no soportado ({tipo}, {bits} bits)"),
+    };
+    if canales == 0 {
+        bail!("el dispositivo de audio no tiene canales");
+    }
+    Ok((formato, canales, frecuencia))
+}
+
 impl CapturaAudio {
-    pub fn abrir() -> Result<Self> {
+    pub fn abrir(origen: Origen) -> Result<Self> {
         unsafe {
-            let en: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-            let (disp, id) = id_predeterminado(&en)?;
-            let cliente: IAudioClient = disp.Activate(CLSCTX_ALL, None)?;
-            let fmt = cliente.GetMixFormat()?;
-            let w = std::ptr::read_unaligned(fmt);
-            let (etiqueta, canales, frecuencia, bits) = (w.wFormatTag, w.nChannels as usize, w.nSamplesPerSec, w.wBitsPerSample);
-            // 0xFFFE = WAVEFORMATEXTENSIBLE: el tipo real está en SubFormat (1 = PCM, 3 = float).
-            let tipo = if etiqueta == 0xFFFE {
-                std::ptr::read_unaligned(fmt as *const WAVEFORMATEXTENSIBLE).SubFormat.data1 as u16
-            } else {
-                etiqueta
-            };
-            let formato = match (tipo, bits) {
-                (3, 32) => Formato::F32,
-                (1, 16) => Formato::I16,
-                (1, 32) => Formato::I32,
-                _ => {
+            let (cliente, id, formato, canales, frecuencia, evento) = match origen {
+                Origen::SalidaCompleta | Origen::Microfono => {
+                    let en: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+                    let flujo = if origen == Origen::Microfono { eCapture } else { eRender };
+                    let (disp, id) = predeterminado(&en, flujo).with_context(|| {
+                        if origen == Origen::Microfono {
+                            "no hay micrófono".to_string()
+                        } else {
+                            "no hay salida de audio".to_string()
+                        }
+                    })?;
+                    let cliente: IAudioClient = disp.Activate(CLSCTX_ALL, None)?;
+                    let fmt = cliente.GetMixFormat()?;
+                    let leido = leer_formato(fmt);
+                    let flags = if origen == Origen::Microfono { 0 } else { AUDCLNT_STREAMFLAGS_LOOPBACK };
+                    let iniciado = match &leido {
+                        Ok(_) => cliente.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 2_000_000, 0, fmt, None),
+                        Err(_) => Ok(()),
+                    };
                     CoTaskMemFree(Some(fmt as *const _));
-                    bail!("formato de audio no soportado ({tipo}, {bits} bits)");
+                    let (formato, canales, frecuencia) = leido?;
+                    iniciado?;
+                    (cliente, id, formato, canales, frecuencia, None)
+                }
+                Origen::Proceso { pid, incluir } => {
+                    let cliente = cliente_de_proceso(pid, incluir)?;
+                    // La captura por proceso no tiene formato propio: se le pide justo el que usa Kairo.
+                    let fmt = WAVEFORMATEX {
+                        wFormatTag: 1,
+                        nChannels: 2,
+                        nSamplesPerSec: FRECUENCIA_AUDIO,
+                        nAvgBytesPerSec: FRECUENCIA_AUDIO * 4,
+                        nBlockAlign: 4,
+                        wBitsPerSample: 16,
+                        cbSize: 0,
+                    };
+                    let flags = AUDCLNT_STREAMFLAGS_LOOPBACK
+                        | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
+                        | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                        | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+                    cliente.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 2_000_000, 0, &fmt, None)?;
+                    // Pide un evento aunque se lea cada 10 ms igual que los otros orígenes.
+                    let evento = CreateEventW(None, false, false, None)?;
+                    cliente.SetEventHandle(evento)?;
+                    (cliente, String::new(), Formato::I16, 2, FRECUENCIA_AUDIO, Some(evento))
                 }
             };
-            let r = cliente.Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 2_000_000, 0, fmt, None);
-            CoTaskMemFree(Some(fmt as *const _));
-            r?;
             let captura: IAudioCaptureClient = cliente.GetService()?;
             cliente.Start()?;
-            if canales == 0 {
-                bail!("la salida de audio no tiene canales");
-            }
-            Ok(Self { cliente, captura, id, canales, formato, remuestreo: Remuestreo::new(frecuencia), siguiente: None })
+            Ok(Self { cliente, captura, id, canales, formato, remuestreo: Remuestreo::new(frecuencia), siguiente: None, evento })
         }
     }
 
@@ -128,16 +256,21 @@ impl CapturaAudio {
                 if muestras.is_empty() {
                     continue;
                 }
+                let largo = (muestras.len() / 2) as i64;
                 // Dónde va este trozo: pegado al anterior, salvo que el reloj diga que hubo un hueco real.
+                // Si Windows no da la marca de tiempo (pasa en la captura por proceso), se estima con el
+                // reloj de ahora: el trozo acaba de terminar.
                 let error_de_tiempo = qpc == 0 || flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR.0 as u32 != 0;
-                let por_reloj = (!error_de_tiempo).then(|| muestras_desde_reloj(qpc as i64));
-                let posicion = match (self.siguiente, por_reloj) {
-                    (Some(s), Some(r)) if (r - s).abs() <= TOLERANCIA => s,
-                    (Some(s), None) => s,
-                    (_, Some(r)) => r,
-                    (None, None) => muestras_desde_reloj(super::reloj::ahora()),
+                let por_reloj =
+                    if error_de_tiempo { muestras_desde_reloj(super::reloj::ahora()) - largo } else { muestras_desde_reloj(qpc as i64) };
+                let posicion = match self.siguiente {
+                    Some(s) if (por_reloj - s).abs() <= TOLERANCIA => s,
+                    // Sin marca de tiempo, el reloj de ahora llega tarde si los trozos vienen en tanda:
+                    // solo se reubica si hubo un hueco claro (adelante), nunca hacia atrás.
+                    Some(s) if error_de_tiempo && por_reloj < s => s,
+                    _ => por_reloj,
                 };
-                self.siguiente = Some(posicion + (muestras.len() / 2) as i64);
+                self.siguiente = Some(posicion + largo);
                 let pts = (posicion as i128 * 10_000_000 / FRECUENCIA_AUDIO as i128) as i64;
                 salida.push(TrozoAudio { pts, posicion, muestras: Arc::new(muestras) });
             }
@@ -149,6 +282,9 @@ impl Drop for CapturaAudio {
     fn drop(&mut self) {
         unsafe {
             let _ = self.cliente.Stop();
+            if let Some(e) = self.evento {
+                let _ = CloseHandle(e);
+            }
         }
     }
 }

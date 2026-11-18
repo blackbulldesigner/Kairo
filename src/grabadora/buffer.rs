@@ -40,10 +40,18 @@ pub struct FormatoVideo {
     pub encoder: String,
 }
 
+/// Pistas de audio del buffer: las tres fijas y, desde `PISTA_PROGRAMAS`, una por programa elegido
+/// (en el orden de la lista de los ajustes).
+pub const PISTA_JUEGO: usize = 0;
+pub const PISTA_SISTEMA: usize = 1;
+pub const PISTA_MICROFONO: usize = 2;
+pub const PISTA_PROGRAMAS: usize = 3;
+
 pub struct Clip {
     pub formato: FormatoVideo,
     pub video: Vec<PaqueteVideo>,
-    pub audio: Vec<TrozoAudio>,
+    /// Una lista de trozos por pista (ver `PISTA_JUEGO` y las demás).
+    pub audio: Vec<Vec<TrozoAudio>>,
     /// Desde y hasta (100 ns, reloj común).
     pub inicio: i64,
     pub fin: i64,
@@ -52,14 +60,15 @@ pub struct Clip {
 pub struct Buffer {
     pub formato: Option<FormatoVideo>,
     video: VecDeque<PaqueteVideo>,
-    audio: VecDeque<TrozoAudio>,
+    audio: Vec<VecDeque<TrozoAudio>>,
     /// Cuánto se guarda (100 ns).
     retener: i64,
 }
 
 impl Buffer {
-    pub fn new(segundos: u32) -> Self {
-        Self { formato: None, video: VecDeque::new(), audio: VecDeque::new(), retener: (segundos as i64 + 3) * SEGUNDO }
+    /// `pistas`: cuántas pistas de audio (3 + los programas elegidos).
+    pub fn new(segundos: u32, pistas: usize) -> Self {
+        Self { formato: None, video: VecDeque::new(), audio: vec![VecDeque::new(); pistas], retener: (segundos as i64 + 3) * SEGUNDO }
     }
 
     /// Si cambia el formato (otra resolución, otro encoder), lo anterior no se puede mezclar en un clip.
@@ -82,11 +91,12 @@ impl Buffer {
         }
     }
 
-    pub fn agregar_audio(&mut self, trozos: impl IntoIterator<Item = TrozoAudio>) {
-        self.audio.extend(trozos);
-        let Some(ultimo) = self.audio.back().map(|t| t.pts) else { return };
-        while self.audio.front().is_some_and(|t| ultimo - t.pts > self.retener + SEGUNDO) {
-            self.audio.pop_front();
+    pub fn agregar_audio(&mut self, pista: usize, trozos: impl IntoIterator<Item = TrozoAudio>) {
+        let Some(cola) = self.audio.get_mut(pista) else { return };
+        cola.extend(trozos);
+        let Some(ultimo) = cola.back().map(|t| t.pts) else { return };
+        while cola.front().is_some_and(|t| ultimo - t.pts > self.retener + SEGUNDO) {
+            cola.pop_front();
         }
     }
 
@@ -110,11 +120,15 @@ impl Buffer {
         let audio = self
             .audio
             .iter()
-            .filter(|t| {
-                let dur = (t.muestras.len() / 2) as i64 * SEGUNDO / FRECUENCIA_AUDIO as i64;
-                t.pts + dur > inicio && t.pts < fin
+            .map(|cola| {
+                cola.iter()
+                    .filter(|t| {
+                        let dur = (t.muestras.len() / 2) as i64 * SEGUNDO / FRECUENCIA_AUDIO as i64;
+                        t.pts + dur > inicio && t.pts < fin
+                    })
+                    .cloned()
+                    .collect()
             })
-            .cloned()
             .collect();
         Some(Clip { formato, video, audio, inicio, fin })
     }

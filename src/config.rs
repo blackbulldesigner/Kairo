@@ -25,6 +25,38 @@ pub enum ModoCaptura {
     Juego,
 }
 
+/// Qué más se graba aparte del juego y el micrófono.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum OtrosSonidos {
+    /// Todo lo demás que suena en la PC (sin el juego), en una pista.
+    Todo,
+    /// Solo los programas de la lista, cada uno en su pista.
+    Elegidos,
+}
+
+/// Un programa cuyo sonido se graba en su propia pista (Discord, música…).
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct ProgramaAudio {
+    /// Nombre del exe en minúsculas ("discord.exe").
+    pub exe: String,
+    pub nombre: String,
+    pub activa: bool,
+    /// 0 a 100.
+    pub volumen: u8,
+}
+
+/// Cuántos programas se pueden sumar como máximo.
+pub const PROGRAMAS_MAX: usize = 8;
+
+/// El juego elegido a mano para "Solo el juego".
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct JuegoElegido {
+    /// Nombre del exe en minúsculas ("valorant-win64-shipping.exe").
+    pub exe: String,
+    /// Para mostrar ("VALORANT").
+    pub nombre: String,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Resolucion {
     Nativa,
@@ -242,6 +274,8 @@ impl CualAtajo {
 #[serde(default)]
 pub struct Config {
     pub modo: ModoCaptura,
+    /// En "Solo el juego": el juego elegido a mano (None = automático, el que esté en pantalla completa).
+    pub juego_elegido: Option<JuegoElegido>,
     /// Monitor a grabar en modo escritorio (nombre de Windows, como `\\.\DISPLAY1`). None = automático.
     pub monitor: Option<String>,
     pub segundos: u32,
@@ -254,8 +288,14 @@ pub struct Config {
     pub audio_juego: FuenteAudio,
     pub audio_sistema: FuenteAudio,
     pub audio_mic: FuenteAudio,
+    pub otros_sonidos: OtrosSonidos,
+    pub programas_audio: Vec<ProgramaAudio>,
     pub carpeta: PathBuf,
     pub sonido_al_guardar: bool,
+    /// Guardar cada clip en una carpeta con el nombre del juego.
+    pub carpeta_por_juego: bool,
+    /// Además de la mezcla, cada fuente de audio en su propia pista (para editar).
+    pub pistas_separadas: bool,
     pub atajo_guardar: Option<Atajo>,
     pub atajo_pausa: Option<Atajo>,
     pub atajo_carpeta: Option<Atajo>,
@@ -265,6 +305,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             modo: ModoCaptura::Escritorio,
+            juego_elegido: None,
             monitor: None,
             segundos: 30,
             resolucion: Resolucion::P1080,
@@ -275,8 +316,12 @@ impl Default for Config {
             audio_juego: FuenteAudio::default(),
             audio_sistema: FuenteAudio::default(),
             audio_mic: FuenteAudio { activa: false, volumen: 100 },
+            otros_sonidos: OtrosSonidos::Todo,
+            programas_audio: Vec::new(),
             carpeta: carpeta_videos(),
             sonido_al_guardar: true,
+            carpeta_por_juego: true,
+            pistas_separadas: false,
             atajo_guardar: Some(Atajo::tecla_sola("F9")),
             atajo_pausa: None,
             atajo_carpeta: None,
@@ -310,6 +355,11 @@ impl Config {
         }
         for f in [&mut self.audio_juego, &mut self.audio_sistema, &mut self.audio_mic] {
             f.volumen = f.volumen.min(100);
+        }
+        self.programas_audio.truncate(PROGRAMAS_MAX);
+        for p in &mut self.programas_audio {
+            p.volumen = p.volumen.min(100);
+            p.exe = p.exe.to_lowercase();
         }
         if self.carpeta.as_os_str().is_empty() {
             self.carpeta = carpeta_videos();
@@ -357,7 +407,13 @@ impl Config {
 
     /// Bytes por segundo que ocupa el buffer en RAM (video comprimido + audio sin comprimir).
     pub fn bytes_por_segundo(&self, nativa: (u32, u32)) -> u64 {
-        let fuentes = [&self.audio_juego, &self.audio_sistema, &self.audio_mic].iter().filter(|f| f.activa).count() as u64;
+        let sistema = self.otros_sonidos == OtrosSonidos::Todo && self.audio_sistema.activa;
+        let programas = if self.otros_sonidos == OtrosSonidos::Elegidos {
+            self.programas_audio.iter().filter(|p| p.activa).count()
+        } else {
+            0
+        };
+        let fuentes = (self.audio_juego.activa as usize + sistema as usize + self.audio_mic.activa as usize + programas) as u64;
         (self.mbps(nativa) as f64 * 125_000.0) as u64 + fuentes * AUDIO_BYTES_POR_SEG
     }
 

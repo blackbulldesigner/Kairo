@@ -314,6 +314,18 @@ pub fn boton(ui: &mut Ui, icono: Option<&str>, texto: &str, estilo: Estilo, acti
     }
 }
 
+/// Botón chico con solo un ícono (y un texto al pasar el mouse).
+pub fn boton_icono(ui: &mut Ui, icono: &str, ayuda: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());
+    let hover = resp.hovered();
+    if hover {
+        ui.painter().rect_filled(rect, 7.0, BOTON_HOVER);
+    }
+    let color = if hover { TEXTO } else { SECUNDARIO };
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, icono, FontId::new(14.0, iconos()), color);
+    resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(ayuda)
+}
+
 /// Opción del menú de la izquierda.
 pub fn item_menu(ui: &mut Ui, icono: &str, texto: &str, seleccionado: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());

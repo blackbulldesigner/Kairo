@@ -5,13 +5,17 @@ use eframe::egui::{self, Ui};
 use super::app::App;
 use super::tema::*;
 use super::widgets::*;
-use crate::config::{self, Calidad, CualAtajo, FuenteAudio, ModoCaptura, Resolucion, TarjetaGrabacion};
+use crate::config::{self, Calidad, CualAtajo, FuenteAudio, ModoCaptura, OtrosSonidos, Resolucion, TarjetaGrabacion};
 use crate::equipo::Equipo;
 use crate::version;
 
 const RAM_SI_NO_SE_SABE: u64 = 8 * 1024 * 1024 * 1024;
 
 impl App {
+    fn ahora_ui(&self, ui: &Ui) -> f64 {
+        ui.input(|i| i.time)
+    }
+
     pub(super) fn pagina_grabacion(&mut self, ui: &mut Ui, eq: Option<&Equipo>) {
         encabezado(ui, "Grabación", "Qué se graba, por cuánto tiempo y con qué calidad.");
 
@@ -33,19 +37,52 @@ impl App {
             let desc = match self.cfg.modo {
                 ModoCaptura::Escritorio => "Graba la pantalla completa: el juego y todo lo que aparezca encima.",
                 ModoCaptura::Juego => {
-                    "Graba solo la ventana del juego: si haces Alt+Tab, en el clip no aparece tu escritorio. \
-                     Llega en la fase 3: por ahora se graba todo el escritorio."
+                    "Graba solo el juego: si haces Alt+Tab o lo minimizas, esa parte del clip queda en negro y tu \
+                     escritorio no aparece."
                 }
             };
             ui.label(egui::RichText::new(desc).size(12.5).color(SECUNDARIO));
             ui.add_space(6.0);
+
+            if self.cfg.modo == ModoCaptura::Juego {
+                // La lista de programas abiertos se relee cada 3 s mientras esta página está a la vista.
+                if self.ahora_ui(ui) >= self.programas_hasta {
+                    self.programas = crate::grabadora::juego::programas_abiertos();
+                    self.programas_hasta = self.ahora_ui(ui) + 3.0;
+                }
+                ui.add_space(4.0);
+                separador(ui);
+                let desc = match &self.cfg.juego_elegido {
+                    None => "Automático: el que esté adelante en pantalla completa.".to_string(),
+                    Some(j) if self.programas.iter().any(|p| p.exe == j.exe) => {
+                        "Elegido a mano: sirve también si juegas en ventana.".to_string()
+                    }
+                    Some(j) => format!("{} no está abierto: el clip queda en negro hasta que lo abras.", j.nombre),
+                };
+                fila(ui, "Juego", Some(&desc), |ui| {
+                    let actual = self.cfg.juego_elegido.as_ref().map(|j| j.nombre.clone()).unwrap_or_else(|| "Automático".into());
+                    egui::ComboBox::new("juego", "").selected_text(actual).width(260.0).height(360.0).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.cfg.juego_elegido, None, "Automático (pantalla completa)");
+                        if let Some(j) = self.cfg.juego_elegido.clone() {
+                            if !self.programas.iter().any(|p| p.exe == j.exe) {
+                                ui.selectable_value(&mut self.cfg.juego_elegido, Some(j.clone()), format!("{} (cerrado)", j.nombre));
+                            }
+                        }
+                        ui.separator();
+                        for p in &self.programas {
+                            let elegido = crate::config::JuegoElegido { exe: p.exe.clone(), nombre: p.nombre.clone() };
+                            ui.selectable_value(&mut self.cfg.juego_elegido, Some(elegido), &p.nombre).on_hover_text(&p.exe);
+                        }
+                    });
+                });
+            }
 
             let monitores = eq.map(|e| e.monitores.len()).unwrap_or(0);
             if self.cfg.modo == ModoCaptura::Escritorio && monitores >= 2 {
                 let e = eq.expect("hay monitores");
                 ui.add_space(4.0);
                 separador(ui);
-                fila(ui, "Monitor", Some("En automático se graba el monitor principal (seguir al juego llega en la fase 3)."), |ui| {
+                fila(ui, "Monitor", Some("En automático se graba el monitor donde está el juego (si no hay juego, el principal)."), |ui| {
                     let actual = match &self.cfg.monitor {
                         None => "Automático".to_string(),
                         Some(id) => e
@@ -163,31 +200,132 @@ impl App {
     }
 
     pub(super) fn pagina_audio(&mut self, ui: &mut Ui, eq: Option<&Equipo>) {
-        encabezado(ui, "Audio", "Qué se escucha en tus clips.");
+        encabezado(ui, "Audio", "Qué se escucha en tus clips, cada fuente con su volumen.");
         let por_juego = eq.map_or(true, |e| e.audio_por_juego());
         tarjeta(ui, "Fuentes", |ui| {
             let desc_juego = if por_juego {
-                "Por ahora va junto con el resto del sistema."
+                "Solo el juego detectado (o el que elegiste en Grabación)."
             } else {
                 "Necesita Windows 10 versión 2004 o más nuevo."
             };
             fuente(ui, "Sonido del juego", desc_juego, &mut self.cfg.audio_juego, por_juego);
             separador(ui);
-            fuente(
-                ui,
-                "Resto del sistema",
-                "Discord, música, navegador… Apágalo para que no salga en tus clips.",
-                &mut self.cfg.audio_sistema,
-                true,
-            );
-            separador(ui);
-            fuente(ui, "Micrófono", "Llega en la fase 3.", &mut self.cfg.audio_mic, false);
+            fuente(ui, "Micrófono", "El micrófono predeterminado de Windows.", &mut self.cfg.audio_mic, true);
         });
-        nota(
-            ui,
-            "En esta versión se graba todo el sonido de la PC en una sola pista (el juego incluido), con el volumen de \
-             «Resto del sistema». Separar el juego y sumar el micrófono llega en la fase 3.",
-        );
+
+        // La lista de programas abiertos se relee cada 3 s mientras la página está a la vista.
+        let ahora = self.ahora_ui(ui);
+        if self.cfg.otros_sonidos == OtrosSonidos::Elegidos && ahora >= self.programas_hasta {
+            self.programas = crate::grabadora::juego::programas_abiertos();
+            self.programas_hasta = ahora + 3.0;
+        }
+        tarjeta(ui, "Otros sonidos", |ui| {
+            if !por_juego {
+                fuente(ui, "Resto del sistema", "Todo lo que suena en la PC, el juego incluido.", &mut self.cfg.audio_sistema, true);
+                return;
+            }
+            ui.add_space(6.0);
+            let ancho = ui.available_width();
+            segmentos(
+                ui,
+                "otros",
+                &mut self.cfg.otros_sonidos,
+                &[(OtrosSonidos::Todo, None, "Todo lo demás"), (OtrosSonidos::Elegidos, None, "Solo los programas que elijas")],
+                Some(ancho),
+                36.0,
+            );
+            ui.add_space(4.0);
+            let desc = match self.cfg.otros_sonidos {
+                OtrosSonidos::Todo => "Todo lo que suena en la PC menos el juego, en una sola pista.",
+                OtrosSonidos::Elegidos => {
+                    "Solo los programas de la lista, cada uno con su volumen y su pista. Si uno no está abierto, se suma \
+                     solo cuando lo abras."
+                }
+            };
+            ui.label(egui::RichText::new(desc).size(12.5).color(SECUNDARIO));
+            ui.add_space(6.0);
+            match self.cfg.otros_sonidos {
+                OtrosSonidos::Todo => {
+                    separador(ui);
+                    fuente(ui, "Resto del sistema", "Discord, música, navegador… Apágalo para que no salga en tus clips.", &mut self.cfg.audio_sistema, true);
+                }
+                OtrosSonidos::Elegidos => {
+                    let mut quitar = None;
+                    for (i, p) in self.cfg.programas_audio.iter_mut().enumerate() {
+                        separador(ui);
+                        let abierto = self.programas.iter().any(|x| x.exe == p.exe);
+                        let desc = if abierto { p.exe.clone() } else { format!("{} · no está abierto", p.exe) };
+                        fila(ui, &p.nombre, Some(&desc), |ui| {
+                            if boton_icono(ui, icono::QUITAR, "Quitar de la lista").clicked() {
+                                quitar = Some(i);
+                            }
+                            ui.add_space(8.0);
+                            interruptor(ui, &mut p.activa, true);
+                            ui.add_space(12.0);
+                            valor(ui, &format!("{} %", p.volumen), 46.0, p.activa);
+                            let mut v = p.volumen as f32;
+                            if deslizador(ui, &mut v, 0.0..=100.0, 5.0, 150.0, p.activa) {
+                                p.volumen = v as u8;
+                            }
+                        });
+                    }
+                    if let Some(i) = quitar {
+                        self.cfg.programas_audio.remove(i);
+                    }
+                    separador(ui);
+                    let juego = self.cfg.juego_elegido.as_ref().map(|j| j.exe.clone());
+                    let disponibles: Vec<_> = self
+                        .programas
+                        .iter()
+                        .filter(|x| !self.cfg.programas_audio.iter().any(|p| p.exe == x.exe) && Some(&x.exe) != juego.as_ref())
+                        .cloned()
+                        .collect();
+                    let lleno = self.cfg.programas_audio.len() >= crate::config::PROGRAMAS_MAX;
+                    let desc = if lleno {
+                        "Ya hay 8 programas: quita uno para sumar otro."
+                    } else if disponibles.is_empty() {
+                        "No hay otros programas abiertos con ventana."
+                    } else {
+                        "Elige entre los programas abiertos (por ejemplo, Discord o tu música)."
+                    };
+                    let mut agregar = None;
+                    fila(ui, "Agregar programa", Some(desc), |ui| {
+                        ui.add_enabled_ui(!lleno && !disponibles.is_empty(), |ui| {
+                            egui::ComboBox::new("agregar_programa", "").selected_text("+ Agregar programa").width(240.0).height(320.0).show_ui(
+                                ui,
+                                |ui| {
+                                    for x in &disponibles {
+                                        if ui.selectable_label(false, &x.nombre).on_hover_text(&x.exe).clicked() {
+                                            agregar = Some(x.clone());
+                                        }
+                                    }
+                                },
+                            );
+                        });
+                    });
+                    if let Some(x) = agregar {
+                        self.cfg.programas_audio.push(crate::config::ProgramaAudio { exe: x.exe, nombre: x.nombre, activa: true, volumen: 100 });
+                    }
+                }
+            }
+        });
+
+        tarjeta(ui, "Pistas", |ui| {
+            fila(
+                ui,
+                "Pistas separadas",
+                Some(
+                    "Además de la mezcla, cada fuente (y cada programa) va en su propia pista del MP4: sirve para editar, por \
+                     ejemplo para quitar Discord y dejar solo el juego.",
+                ),
+                |ui| {
+                    interruptor(ui, &mut self.cfg.pistas_separadas, true);
+                },
+            );
+        });
+        if !por_juego {
+            nota(ui, "En esta versión de Windows no se puede separar el sonido del juego ni de cada programa: va todo junto.");
+        }
     }
 
     pub(super) fn pagina_clips(&mut self, ui: &mut Ui) {
@@ -214,6 +352,15 @@ impl App {
                     self.cfg.carpeta = nueva;
                 }
             }
+            separador(ui);
+            fila(
+                ui,
+                "Una carpeta por juego",
+                Some("Los clips de cada juego van en su carpeta (por ejemplo, Clips\\VALORANT) y llevan su nombre."),
+                |ui| {
+                    interruptor(ui, &mut self.cfg.carpeta_por_juego, true);
+                },
+            );
             separador(ui);
             fila(ui, "Sonido al guardar", Some("Un aviso corto para saber que el clip se guardó."), |ui| {
                 interruptor(ui, &mut self.cfg.sonido_al_guardar, true);
@@ -257,6 +404,8 @@ impl App {
                     "Preparando"
                 };
                 fila_info(ui, "Estado", texto);
+                separador(ui);
+                fila_info(ui, "Juego", e.juego.as_deref().unwrap_or("Ninguno detectado"));
                 if let Some(err) = &e.error {
                     separador(ui);
                     fila_info_color(ui, "Problema", err, ROJO);

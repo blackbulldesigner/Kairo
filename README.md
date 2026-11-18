@@ -7,7 +7,8 @@ PCs de escritorio.
 > **Estado: vista previa.** La grabadora ya funciona: graba el monitor en segundo plano y guarda los
 > últimos segundos con F9, con el sonido del sistema. Funciona también en laptops con dos tarjetas
 > (captura de respaldo), en tarjetas sin encoder (por procesador) y baja la calidad con batería.
-> Faltan el modo "Solo el juego", el audio separado y el micrófono (fase 3).
+> Detecta el juego, puede grabar solo el juego y separa el audio del juego, del resto del sistema y
+> del micrófono, y graba aparte los programas que elijas (Discord, música…). Próximo: biblioteca de clips.
 
 ## Cómo se usa
 
@@ -55,9 +56,16 @@ proceso aparte que solo existe mientras está abierta. Se comunican con mensajes
   elegir con qué tarjeta grabar, grabación por procesador si la tarjeta no tiene encoder, ahorro con batería y
   cola de cuadros (no se saltan cuadros si el encoder se demora). Queda por medir en laptops reales; la
   prioridad baja en la GPU queda como experimento para cuando haya mediciones.
-- [ ] **Fase 3: audio y juegos.** Detectar el juego, modo "Solo el juego", audio solo del juego, micrófono,
-  pistas separadas y carpetas por juego.
-- [ ] **Fase 4: extras.** Recorte rápido de clips, actualizaciones verificadas y firma digital.
+- [x] **Fase 3: audio y juegos.** Detecta el juego (pantalla completa) o se elige a mano; sigue al juego de
+  monitor; "Solo el juego" deja el clip en negro con Alt+Tab; audio solo del juego, resto del sistema sin el
+  juego y micrófono; pistas separadas opcionales (la mezcla siempre primero); carpeta y nombre por juego; la
+  ventana de ajustes crece con la ventana.
+- [x] **Fase 3b: audio por programa.** "Otros sonidos": todo lo demás, o solo los programas que elijas con "+"
+  (Discord, música…), cada uno con su volumen y su pista. Cada clip guarda al lado un archivo oculto
+  (`clip.mp4.kairo`) con el juego y los nombres de las pistas, para la biblioteca y el editor.
+- [ ] **Fase 4: biblioteca de clips.** Ver los clips dentro de Kairo (miniaturas, filtro por juego, reproductor),
+  en la ventana de ajustes: no pesa nada mientras juegas.
+- [ ] **Fase 5: extras.** Editor y recorte de clips, actualizaciones verificadas y firma digital.
 
 **Cómo medimos "no afecta los FPS":** mismo juego, misma escena, laptop conectada al cargador y 3 corridas por
 caso: sin grabar, con Medal, con Kairo y con la grabadora de NVIDIA o AMD. Se anotan FPS promedio, "1 % low" y

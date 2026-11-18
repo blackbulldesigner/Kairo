@@ -1,6 +1,6 @@
 [package]
 name = "kairo"
-version = "0.3.0"
+version = "0.5.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Grabador de clips instantáneos para Windows, ligero y pensado para no bajar los FPS"
@@ -12,10 +12,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rfd = { version = "0.15", default-features = false }
 png = { version = "0.17", optional = true }
+# El macro `implement` (objetos COM propios, como el aviso de la captura de audio por proceso) lo necesita.
+windows-core = "0.58"
 
 [dependencies.windows]
 version = "0.58"
 features = [
+    "implement",
     "Foundation",
     "Graphics",
     "Graphics_Capture",
@@ -35,6 +38,7 @@ features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_LibraryLoader",
     "Win32_System_Performance",
     "Win32_System_Power",

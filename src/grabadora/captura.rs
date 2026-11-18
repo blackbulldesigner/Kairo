@@ -51,6 +51,15 @@ fn mismo_luid(a: LUID, b: LUID) -> bool {
 
 /// Busca el monitor por su nombre de Windows (`\\.\DISPLAY1`). Sin nombre, o si ya no existe, el principal.
 pub fn buscar_monitor(id: Option<&str>) -> Result<Monitor> {
+    buscar(|m| id == Some(m.id.as_str()))
+}
+
+/// El monitor con ese HMONITOR (el del juego). Si ya no existe, el principal.
+pub fn buscar_monitor_por_handle(h: isize) -> Result<Monitor> {
+    buscar(|m| m.hmonitor.0 as isize == h)
+}
+
+fn buscar(es: impl Fn(&Monitor) -> bool) -> Result<Monitor> {
     unsafe {
         let fabrica: IDXGIFactory1 = CreateDXGIFactory1()?;
         let mut principal = None;
@@ -73,7 +82,7 @@ pub fn buscar_monitor(id: Option<&str>) -> Result<Monitor> {
                     id: texto_utf16(&od.DeviceName),
                     hmonitor: od.Monitor,
                 };
-                if id == Some(m.id.as_str()) {
+                if es(&m) {
                     return Ok(m);
                 }
                 if r.left == 0 && r.top == 0 && principal.is_none() {
@@ -178,6 +187,8 @@ pub struct Captura {
     video_contexto: ID3D11VideoContext,
     procesador: ID3D11VideoProcessor,
     entrada: ID3D11VideoProcessorInputView,
+    /// Cuadro negro del tamaño del monitor ("Solo el juego" cuando el juego no está adelante).
+    negro: ID3D11VideoProcessorInputView,
     texturas: Vec<(ID3D11Texture2D, ID3D11VideoProcessorOutputView)>,
     siguiente: usize,
 }
@@ -279,6 +290,31 @@ impl Captura {
             video_dispositivo.CreateVideoProcessorInputView(&ultimo, &enumerador, &vista_entrada, Some(&mut entrada))?;
             let entrada = entrada.ok_or_else(|| anyhow!("sin vista de entrada"))?;
 
+            // Negro opaco (BGRA 0,0,0,255), una sola vez.
+            let pixeles: Vec<u8> = (0..ancho_monitor as usize * alto_monitor as usize).flat_map(|_| [0u8, 0, 0, 255]).collect();
+            let datos = D3D11_SUBRESOURCE_DATA { pSysMem: pixeles.as_ptr() as *const _, SysMemPitch: ancho_monitor * 4, SysMemSlicePitch: 0 };
+            let desc_negro = D3D11_TEXTURE2D_DESC {
+                Width: ancho_monitor,
+                Height: alto_monitor,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                // Igual que la del último cuadro: el procesador de video no acepta texturas inmutables.
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32 | D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
+            };
+            let mut tex_negra = None;
+            dispositivo.CreateTexture2D(&desc_negro, Some(&datos), Some(&mut tex_negra)).context("no se pudo crear el cuadro negro")?;
+            let tex_negra = tex_negra.ok_or_else(|| anyhow!("sin textura negra"))?;
+            let mut negro = None;
+            video_dispositivo
+                .CreateVideoProcessorInputView(&tex_negra, &enumerador, &vista_entrada, Some(&mut negro))
+                .context("el procesador de video no acepta el cuadro negro")?;
+            let negro = negro.ok_or_else(|| anyhow!("sin vista del cuadro negro"))?;
+
             let mut texturas = Vec::with_capacity(TEXTURAS);
             let vista_salida = D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC {
                 ViewDimension: D3D11_VPOV_DIMENSION_TEXTURE2D,
@@ -313,6 +349,7 @@ impl Captura {
                 video_contexto,
                 procesador,
                 entrada,
+                negro,
                 texturas,
                 siguiente: 0,
             })
@@ -380,12 +417,23 @@ impl Captura {
 
     /// Convierte el último cuadro a NV12 (y al tamaño del clip) en una de las texturas que rotan.
     pub fn convertir(&mut self) -> Result<ID3D11Texture2D> {
+        let entrada = self.entrada.clone();
+        self.procesar(entrada)
+    }
+
+    /// Un cuadro negro en NV12 ("Solo el juego" con el juego minimizado o detrás de otra ventana).
+    pub fn negro(&mut self) -> Result<ID3D11Texture2D> {
+        let entrada = self.negro.clone();
+        self.procesar(entrada)
+    }
+
+    fn procesar(&mut self, entrada: ID3D11VideoProcessorInputView) -> Result<ID3D11Texture2D> {
         let (tex, vista) = &self.texturas[self.siguiente];
         self.siguiente = (self.siguiente + 1) % self.texturas.len();
         unsafe {
             let mut flujo = D3D11_VIDEO_PROCESSOR_STREAM {
                 Enable: true.into(),
-                pInputSurface: ManuallyDrop::new(Some(self.entrada.clone())),
+                pInputSurface: ManuallyDrop::new(Some(entrada)),
                 ..Default::default()
             };
             let r = self.video_contexto.VideoProcessorBlt(&self.procesador, vista, 0, std::slice::from_ref(&flujo));

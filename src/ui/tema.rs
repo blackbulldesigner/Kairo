@@ -48,6 +48,8 @@ pub mod icono {
     pub const INFO: &str = "\u{E946}";
     /// Abrir en otra ventana (para enlaces).
     pub const ENLACE: &str = "\u{E8A7}";
+    /// Tacho de basura.
+    pub const QUITAR: &str = "\u{E74D}";
 }
 
 pub fn semibold() -> FontFamily {
