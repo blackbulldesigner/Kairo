@@ -4,10 +4,44 @@ use windows::Win32::Foundation::{BOOL, COLORREF, FALSE, HWND, LPARAM, TRUE};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWINDOWATTRIBUTE,
 };
-use windows::Win32::System::Threading::GetCurrentThreadId;
-use windows::Win32::UI::WindowsAndMessaging::{EnumThreadWindows, GetWindowTextW};
+use windows::core::{w, HSTRING, PCWSTR};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
+use windows::Win32::System::Threading::{CreateMutexW, GetCurrentThreadId};
+use windows::Win32::UI::WindowsAndMessaging::{EnumThreadWindows, FindWindowW, GetWindowTextW, SetForegroundWindow, ShowWindow, SW_RESTORE};
 
 use super::tema;
+
+/// Candado de instancia única de la ventana de ajustes (se suelta al cerrarla).
+pub struct Candado(HANDLE);
+
+impl Drop for Candado {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
+/// None si ya hay otra ventana de ajustes abierta.
+pub fn candado_unico() -> Option<Candado> {
+    unsafe {
+        let h = CreateMutexW(None, TRUE, w!("Local\\Kairo.Ajustes")).ok()?;
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            let _ = CloseHandle(h);
+            return None;
+        }
+        Some(Candado(h))
+    }
+}
+
+pub fn traer_al_frente(titulo: &str) {
+    unsafe {
+        if let Ok(h) = FindWindowW(PCWSTR::null(), &HSTRING::from(titulo)) {
+            let _ = ShowWindow(h, SW_RESTORE);
+            let _ = SetForegroundWindow(h);
+        }
+    }
+}
 
 struct Busqueda {
     titulo: Vec<u16>,

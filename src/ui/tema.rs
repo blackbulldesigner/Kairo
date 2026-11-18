@@ -29,6 +29,7 @@ pub const ACENTO_APAGADO: Color32 = Color32::from_rgb(0x25, 0x45, 0x75);
 pub const TEXTO_ACENTO_APAGADO: Color32 = Color32::from_rgb(0x7D, 0x93, 0xB8);
 pub const VERDE: Color32 = Color32::from_rgb(0x35, 0xC6, 0x83);
 pub const ROJO: Color32 = Color32::from_rgb(0xE8, 0x5D, 0x5D);
+pub const AMARILLO: Color32 = Color32::from_rgb(0xE8, 0xB0, 0x4B);
 
 /// Íconos de Segoe MDL2 Assets (viene con Windows 10 y 11).
 pub mod icono {

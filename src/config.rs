@@ -144,6 +144,48 @@ impl Atajo {
         self.partes().join(" + ")
     }
 
+    /// Código de tecla virtual de Windows (para `RegisterHotKey`). None si la tecla no se puede usar.
+    pub fn tecla_virtual(&self) -> Option<u32> {
+        let t = self.tecla.as_str();
+        let mut letras = t.chars();
+        if let (Some(c), None) = (letras.next(), letras.next()) {
+            if c.is_ascii_digit() || c.is_ascii_uppercase() {
+                return Some(c as u32);
+            }
+        }
+        if let Some(n) = t.strip_prefix('F').and_then(|n| n.parse::<u32>().ok()) {
+            return (1..=24).contains(&n).then_some(0x70 + n - 1);
+        }
+        Some(match t {
+            "Backspace" => 0x08,
+            "Tab" => 0x09,
+            "Enter" => 0x0D,
+            "Space" => 0x20,
+            "PageUp" => 0x21,
+            "PageDown" => 0x22,
+            "End" => 0x23,
+            "Home" => 0x24,
+            "ArrowLeft" => 0x25,
+            "ArrowUp" => 0x26,
+            "ArrowRight" => 0x27,
+            "ArrowDown" => 0x28,
+            "Insert" => 0x2D,
+            "Delete" => 0x2E,
+            "Semicolon" => 0xBA,
+            "Plus" | "Equals" => 0xBB,
+            "Comma" => 0xBC,
+            "Minus" => 0xBD,
+            "Period" => 0xBE,
+            "Slash" => 0xBF,
+            "Backtick" => 0xC0,
+            "OpenBracket" => 0xDB,
+            "Backslash" => 0xDC,
+            "CloseBracket" => 0xDD,
+            "Quote" => 0xDE,
+            _ => return None,
+        })
+    }
+
     /// Las letras y los números sin Ctrl ni Alt dejarían de escribirse en todo Windows.
     pub fn es_valido(&self) -> bool {
         let simple = self.tecla.chars().count() == 1 && self.tecla.chars().all(|c| c.is_ascii_alphanumeric());

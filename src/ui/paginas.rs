@@ -31,7 +31,10 @@ impl App {
             ui.add_space(4.0);
             let desc = match self.cfg.modo {
                 ModoCaptura::Escritorio => "Graba la pantalla completa: el juego y todo lo que aparezca encima.",
-                ModoCaptura::Juego => "Graba solo la ventana del juego: si haces Alt+Tab, en el clip no aparece tu escritorio.",
+                ModoCaptura::Juego => {
+                    "Graba solo la ventana del juego: si haces Alt+Tab, en el clip no aparece tu escritorio. \
+                     Llega en la fase 3: por ahora se graba todo el escritorio."
+                }
             };
             ui.label(egui::RichText::new(desc).size(12.5).color(SECUNDARIO));
             ui.add_space(6.0);
@@ -41,7 +44,7 @@ impl App {
                 let e = eq.expect("hay monitores");
                 ui.add_space(4.0);
                 separador(ui);
-                fila(ui, "Monitor", Some("En automático se graba el monitor donde está el juego."), |ui| {
+                fila(ui, "Monitor", Some("En automático se graba el monitor principal (seguir al juego llega en la fase 3)."), |ui| {
                     let actual = match &self.cfg.monitor {
                         None => "Automático".to_string(),
                         Some(id) => e
@@ -151,7 +154,7 @@ impl App {
         let por_juego = eq.map_or(true, |e| e.audio_por_juego());
         tarjeta(ui, "Fuentes", |ui| {
             let desc_juego = if por_juego {
-                "Solo el juego que estás jugando."
+                "Por ahora va junto con el resto del sistema."
             } else {
                 "Necesita Windows 10 versión 2004 o más nuevo."
             };
@@ -165,9 +168,13 @@ impl App {
                 true,
             );
             separador(ui);
-            fuente(ui, "Micrófono", "El micrófono predeterminado de Windows.", &mut self.cfg.audio_mic, true);
+            fuente(ui, "Micrófono", "Llega en la fase 3.", &mut self.cfg.audio_mic, false);
         });
-        nota(ui, "Por ahora las fuentes se mezclan en una sola pista. Las pistas separadas llegan más adelante.");
+        nota(
+            ui,
+            "En esta versión se graba todo el sonido de la PC en una sola pista (el juego incluido), con el volumen de \
+             «Resto del sistema». Separar el juego y sumar el micrófono llega en la fase 3.",
+        );
     }
 
     pub(super) fn pagina_clips(&mut self, ui: &mut Ui) {
@@ -266,12 +273,18 @@ impl App {
             }
         });
 
-        tarjeta(ui, "Acerca de", |ui| {
+        tarjeta(ui, "Kairo", |ui| {
+            // Se aplica al momento (no espera a «Guardar cambios»): es un ajuste de Windows, no de config.json.
+            fila(ui, "Iniciar con Windows", Some("Kairo arranca en la bandeja, sin abrir ventanas."), |ui| {
+                if interruptor(ui, &mut self.autoinicio, true) {
+                    crate::autoinicio::poner(self.autoinicio);
+                    self.autoinicio = crate::autoinicio::activo();
+                }
+            });
+            separador(ui);
             fila_info(ui, "Versión", &format!("Kairo {} (vista previa)", env!("CARGO_PKG_VERSION")));
             separador(ui);
             fila_info(ui, "Licencia", "GPL-3.0: código abierto. Puedes usarlo, estudiarlo y mejorarlo.");
-            separador(ui);
-            fila_info(ui, "Estado", "Los ajustes y el diagnóstico ya funcionan. La grabadora llega en la fase 1.");
         });
     }
 }
@@ -279,7 +292,9 @@ impl App {
 /// Fila de una fuente de audio: interruptor y volumen.
 fn fuente(ui: &mut Ui, titulo: &str, desc: &str, f: &mut FuenteAudio, disponible: bool) {
     fila(ui, titulo, Some(desc), |ui| {
-        interruptor(ui, &mut f.activa, disponible);
+        // Si la fuente no está disponible se muestra apagada, aunque el ajuste guardado diga otra cosa.
+        let mut apagada = false;
+        interruptor(ui, if disponible { &mut f.activa } else { &mut apagada }, disponible);
         ui.add_space(12.0);
         let activo = disponible && f.activa;
         valor(ui, &format!("{} %", f.volumen), 46.0, activo);

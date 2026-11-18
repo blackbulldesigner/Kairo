@@ -24,6 +24,18 @@ Ver `README.md` para el plan por fases.
 ## Código
 
 - Comentarios y nombres en español.
+- `src/main.rs`: modos del exe (sin argumentos = bandeja; `--fondo`; `--ajustes`).
+- `src/bandeja.rs`: grabadora en la bandeja (ícono, menú, atajos globales, mensajes `WM_APP+n` de los ajustes).
+- `src/grabadora/`: `captura.rs` (Desktop Duplication + NV12 en GPU), `encoder.rs` (H.264 por hardware,
+  asíncrono), `audio.rs` (WASAPI loopback), `buffer.rs` (RAM), `mp4.rs` (sink writer), `mod.rs` (hilos).
+  Video y audio usan el mismo reloj (QPC en 100 ns, `reloj.rs`).
 - `src/equipo.rs`: detección del equipo (Windows, RAM, batería, tarjetas, monitores, encoders).
-- `src/config.rs`: `%APPDATA%\Kairo\config.json`.
+- `src/config.rs`: `%APPDATA%\Kairo\config.json`. `src/estado.rs`: `estado.json` (grabadora → ajustes).
 - `src/ui/`: ventana de ajustes (`app.rs` arma la ventana, `paginas.rs` cada página).
+
+## Probar
+
+- No hay ffprobe: `--prueba-grabar` y `--prueba-leer` (feature `dev`) graban y verifican un MP4 de verdad.
+- Para hablarle a la grabadora desde PowerShell con `FindWindow`, pasar `[NullString]::Value` como título:
+  `$null` se convierte en texto vacío y no la encuentra.
+- Mientras alguien prueba el exe de `target\release`, compilar solo en debug (o `cargo check --release`).

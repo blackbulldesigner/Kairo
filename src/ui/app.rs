@@ -8,8 +8,10 @@ use eframe::egui::{self, Align, CentralPanel, Frame, Layout, Margin, RichText, S
 use super::captura::Pedido;
 use super::tema::{self, *};
 use super::widgets::*;
+use crate::bandeja;
 use crate::config::{Atajo, CualAtajo, Config};
 use crate::equipo::Equipo;
+use crate::estado::{self, Estado};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pagina {
@@ -69,6 +71,13 @@ pub struct App {
     aviso: Option<(String, bool, f64)>,
     ahora: f64,
     captura: Option<Pedido>,
+    /// Lo que informa la grabadora (se relee cada segundo). None = la grabadora está cerrada.
+    estado: Option<Estado>,
+    proxima_lectura: f64,
+    /// Se le pidió a la grabadora que suelte los atajos (mientras se elige uno nuevo).
+    atajos_suspendidos: bool,
+    pub(super) autoinicio: bool,
+    alto_estado: f32,
 }
 
 impl App {
@@ -91,7 +100,79 @@ impl App {
 
         let cfg = Config::cargar();
         let pagina = captura.as_ref().map(|c| c.pagina).unwrap_or(Pagina::Grabacion);
-        Self { pagina, guardada: cfg.clone(), cfg, equipo, capturando: None, aviso: None, ahora: 0.0, captura }
+        Self {
+            pagina,
+            guardada: cfg.clone(),
+            cfg,
+            equipo,
+            capturando: None,
+            aviso: None,
+            ahora: 0.0,
+            captura,
+            estado: None,
+            proxima_lectura: 0.0,
+            atajos_suspendidos: false,
+            autoinicio: crate::autoinicio::activo(),
+            alto_estado: 64.0,
+        }
+    }
+
+    /// Relee el estado de la grabadora una vez por segundo.
+    fn leer_estado(&mut self, ctx: &egui::Context) {
+        if self.ahora >= self.proxima_lectura {
+            self.estado = if bandeja::ventana().is_some() { Some(estado::leer().unwrap_or_default()) } else { None };
+            self.proxima_lectura = self.ahora + 1.0;
+        }
+        ctx.request_repaint_after(Duration::from_secs(1));
+    }
+
+    /// Mientras se elige un atajo, la grabadora tiene que soltar los suyos (si no, F9 guardaría un clip
+    /// en vez de llegar a esta ventana).
+    fn sincronizar_atajos(&mut self) {
+        let quiere = self.capturando.is_some();
+        if quiere != self.atajos_suspendidos {
+            bandeja::avisar(bandeja::WM_SUSPENDER_ATAJOS, quiere as usize);
+            self.atajos_suspendidos = quiere;
+        }
+    }
+
+    fn tarjeta_estado(&mut self, ui: &mut egui::Ui) {
+        let atajo = self.guardada.atajo(CualAtajo::Guardar).map(|a| a.texto());
+        let (color, titulo, detalle, iniciar) = match &self.estado {
+            None => (TENUE, "Grabadora cerrada".to_string(), "Kairo no está grabando.".to_string(), true),
+            Some(e) if e.pausado => (AMARILLO, "En pausa".into(), "Reanúdala desde el ícono de la bandeja.".into(), false),
+            Some(e) if e.grabando => {
+                let seg = crate::config::texto_duracion(self.guardada.segundos);
+                let tecla = atajo.map(|a| format!(" · {a} guarda")).unwrap_or_default();
+                (VERDE, "Grabando".into(), format!("Últimos {seg}{tecla}"), false)
+            }
+            Some(e) => match &e.error {
+                Some(err) => (ROJO, "No puede grabar".into(), err.clone(), false),
+                None => (TENUE, "Preparando…".into(), "Abriendo la captura.".into(), false),
+            },
+        };
+        let r = Frame::none().fill(FONDO).stroke(egui::Stroke::new(1.0_f32, BORDE)).rounding(8.0).inner_margin(Margin::same(11.0)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 3.0;
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                ui.painter().circle_filled(r.center(), 4.0, color);
+                ui.label(RichText::new(titulo).family(semibold()).size(13.0).color(TEXTO));
+            });
+            ui.label(RichText::new(detalle).size(12.0).color(SECUNDARIO));
+            if iniciar {
+                ui.add_space(4.0);
+                if boton(ui, None, "Iniciar grabadora", Estilo::Secundario, true).clicked() {
+                    bandeja::iniciar_en_fondo();
+                    self.proxima_lectura = self.ahora + 0.5;
+                }
+            }
+        });
+        let alto = r.response.rect.height();
+        if (alto - self.alto_estado).abs() > 0.5 {
+            self.alto_estado = alto;
+            ui.ctx().request_repaint();
+        }
     }
 
     pub(super) fn avisar(&mut self, texto: impl Into<String>, error: bool) {
@@ -102,7 +183,9 @@ impl App {
         match self.cfg.guardar() {
             Ok(()) => {
                 self.guardada = self.cfg.clone();
+                bandeja::avisar(bandeja::WM_RECARGAR, 0);
                 self.avisar("Cambios guardados", false);
+                self.proxima_lectura = self.ahora + 0.5;
             }
             Err(e) => self.avisar(format!("No se pudieron guardar los cambios: {e}"), true),
         }
@@ -124,6 +207,10 @@ impl App {
                     let nuevo = Atajo { tecla: key.name().to_string(), ctrl: modifiers.ctrl, shift: modifiers.shift, alt: modifiers.alt };
                     if !nuevo.es_valido() {
                         self.avisar("Las letras y los números necesitan Ctrl o Alt: si no, dejarías de poder escribirlos.", true);
+                        continue;
+                    }
+                    if nuevo.tecla_virtual().is_none() {
+                        self.avisar("Esa tecla no se puede usar como atajo. Prueba con otra (por ejemplo, F1 a F12).", true);
                         continue;
                     }
                     // Si otro atajo usaba la misma combinación, queda libre.
@@ -156,19 +243,9 @@ impl App {
             }
             ui.add_space(2.0);
         }
-        // Estado de la grabadora, pegado abajo.
-        const ALTO_ESTADO: f32 = 64.0;
-        ui.add_space((ui.available_height() - ALTO_ESTADO).max(0.0));
-        Frame::none().fill(FONDO).stroke(egui::Stroke::new(1.0_f32, BORDE)).rounding(8.0).inner_margin(Margin::same(11.0)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 3.0;
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                ui.painter().circle_filled(r.center(), 4.0, TENUE);
-                ui.label(RichText::new("Sin grabar").family(semibold()).size(13.0).color(TEXTO));
-            });
-            ui.label(RichText::new("La grabadora llega en la fase 1").size(12.0).color(SECUNDARIO));
-        });
+        // Estado de la grabadora, pegado abajo (su alto se mide en el cuadro anterior).
+        ui.add_space((ui.available_height() - self.alto_estado).max(0.0));
+        self.tarjeta_estado(ui);
     }
 
     fn pie(&mut self, ui: &mut egui::Ui) {
@@ -200,6 +277,8 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ahora = ctx.input(|i| i.time);
         self.leer_tecla_de_atajo(ctx);
+        self.sincronizar_atajos();
+        self.leer_estado(ctx);
         let equipo = self.equipo.lock().ok().and_then(|e| e.clone());
 
         TopBottomPanel::bottom("pie")
@@ -233,6 +312,13 @@ impl eframe::App for App {
 
         if let Some(c) = &mut self.captura {
             c.paso(ctx, equipo.is_some());
+        }
+    }
+
+    /// Si se cierra la ventana mientras se elegía un atajo, la grabadora vuelve a tomar los suyos.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.atajos_suspendidos {
+            bandeja::avisar(bandeja::WM_SUSPENDER_ATAJOS, 0);
         }
     }
 }
