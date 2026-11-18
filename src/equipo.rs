@@ -168,7 +168,7 @@ impl Equipo {
 
     /// Resumen para copiar y compartir.
     pub fn como_texto(&self) -> String {
-        let mut s = format!("Kairo {} · diagnóstico\n", env!("CARGO_PKG_VERSION"));
+        let mut s = format!("Kairo {} · diagnóstico\n", crate::version::corta());
         s += &format!("Equipo: {}\n", self.texto_energia());
         s += &format!("Windows: {}\n", self.windows);
         s += &format!("Procesador: {}\n", self.procesador);

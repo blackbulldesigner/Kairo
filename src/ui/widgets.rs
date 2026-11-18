@@ -85,6 +85,10 @@ pub fn fila(ui: &mut Ui, titulo: &str, desc: Option<&str>, control: impl FnOnce(
 
 /// Fila de solo lectura: etiqueta a la izquierda (ancho fijo) y el valor a la derecha.
 pub fn fila_info(ui: &mut Ui, etiqueta: &str, valor: &str) {
+    fila_info_color(ui, etiqueta, valor, TEXTO);
+}
+
+pub fn fila_info_color(ui: &mut Ui, etiqueta: &str, valor: &str, color: Color32) {
     const ANCHO_ETIQUETA: f32 = 170.0;
     let ancho = ui.available_width();
     let g_et = medir_ajustado(ui, etiqueta, FontId::proportional(13.0), ANCHO_ETIQUETA - 12.0);
@@ -92,7 +96,32 @@ pub fn fila_info(ui: &mut Ui, etiqueta: &str, valor: &str) {
     let alto = g_et.size().y.max(g_val.size().y) + 18.0;
     let (rect, _) = ui.allocate_exact_size(vec2(ancho, alto), Sense::hover());
     ui.painter().galley(pos2(rect.left(), rect.top() + 9.0), g_et, SECUNDARIO);
-    ui.painter().galley(pos2(rect.left() + ANCHO_ETIQUETA, rect.top() + 9.0), g_val, TEXTO);
+    ui.painter().galley(pos2(rect.left() + ANCHO_ETIQUETA, rect.top() + 9.0), g_val, color);
+}
+
+/// Un cambio de la lista de novedades: fecha, título y commit. `actual` marca el de este exe.
+pub fn fila_novedad(ui: &mut Ui, fecha: &str, texto: &str, commit: &str, actual: bool) {
+    const ANCHO_FECHA: f32 = 96.0;
+    let ancho = ui.available_width();
+    let g_commit = medir(ui, commit, FontId::monospace(11.5));
+    let g_chip = actual.then(|| medir(ui, "este exe", FontId::proportional(11.5)));
+    let derecha = g_commit.size().x + g_chip.as_ref().map_or(0.0, |g| g.size().x + 22.0);
+    let ancho_texto = (ancho - ANCHO_FECHA - derecha - 16.0).max(120.0);
+    let g_fecha = medir(ui, fecha, FontId::proportional(12.5));
+    let g_texto = medir_ajustado(ui, texto, FontId::proportional(13.0), ancho_texto);
+    let alto = g_texto.size().y.max(g_fecha.size().y) + 16.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(ancho, alto), Sense::hover());
+    let p = ui.painter();
+    let y = rect.top() + 8.0;
+    p.galley(pos2(rect.left(), y + 1.0), g_fecha, TENUE);
+    p.galley(pos2(rect.left() + ANCHO_FECHA, y), g_texto, if actual { TEXTO } else { SECUNDARIO });
+    let x_commit = rect.right() - g_commit.size().x;
+    p.galley(pos2(x_commit, y + 1.0), g_commit, TENUE);
+    if let Some(g) = g_chip {
+        let r = Rect::from_min_size(pos2(x_commit - 10.0 - g.size().x - 12.0, y - 1.0), vec2(g.size().x + 12.0, g.size().y + 4.0));
+        p.rect_filled(r, 5.0, SELECCION);
+        p.galley(pos2(r.left() + 6.0, r.top() + 2.0), g, TEXTO_SEL);
+    }
 }
 
 /// Texto chico y tenue, para notas debajo de una tarjeta.

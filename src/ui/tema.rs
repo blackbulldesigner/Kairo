@@ -45,6 +45,9 @@ pub mod icono {
     pub const AJUSTES: &str = "\u{E713}";
     pub const COPIAR: &str = "\u{E8C8}";
     pub const EDITAR: &str = "\u{E70F}";
+    pub const INFO: &str = "\u{E946}";
+    /// Abrir en otra ventana (para enlaces).
+    pub const ENLACE: &str = "\u{E8A7}";
 }
 
 pub fn semibold() -> FontFamily {

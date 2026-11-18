@@ -15,6 +15,15 @@ Ver `README.md` para el plan por fases.
   aparte. No sumar dependencias si Windows ya trae la API.
 - **Modos de captura:** "Todo el escritorio" y "Solo el juego".
 
+## Versiones y novedades
+
+- Cada cambio va en su propio commit con un título claro en español, pensado para quien usa la app: ese
+  título aparece en **Acerca de → Novedades** (lo arma `build.rs` con `git log`).
+- `build.rs` guarda en el exe el commit, la rama, la fecha y si había cambios sin commit (`src/version.rs`);
+  el menú muestra `v0.2.0 · <commit>` y un "+" en amarillo si el exe tiene cambios sin commit.
+- Subir `version` en `Cargo.toml` al terminar cada fase.
+- Al contarle un cambio a la persona, decirle el commit para que lo compare con Acerca de.
+
 ## Interfaz
 
 - Textos en español neutro, tratando de "tú" ("Aprieta", "Elige").

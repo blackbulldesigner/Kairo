@@ -7,6 +7,7 @@ use super::tema::*;
 use super::widgets::*;
 use crate::config::{self, Calidad, CualAtajo, FuenteAudio, ModoCaptura, Resolucion, TarjetaGrabacion};
 use crate::equipo::Equipo;
+use crate::version;
 
 const RAM_SI_NO_SE_SABE: u64 = 8 * 1024 * 1024 * 1024;
 
@@ -273,7 +274,7 @@ impl App {
             }
         });
 
-        tarjeta(ui, "Kairo", |ui| {
+        tarjeta(ui, "Inicio", |ui| {
             // Se aplica al momento (no espera a «Guardar cambios»): es un ajuste de Windows, no de config.json.
             fila(ui, "Iniciar con Windows", Some("Kairo arranca en la bandeja, sin abrir ventanas."), |ui| {
                 if interruptor(ui, &mut self.autoinicio, true) {
@@ -281,10 +282,68 @@ impl App {
                     self.autoinicio = crate::autoinicio::activo();
                 }
             });
+        });
+    }
+
+    pub(super) fn pagina_acerca(&mut self, ui: &mut Ui) {
+        encabezado(ui, "Acerca de", "Qué versión de Kairo estás usando y qué cambió en cada una.");
+        let novedades = version::novedades();
+        tarjeta(ui, "Esta versión", |ui| {
+            fila_info(ui, "Versión", &format!("Kairo {} (vista previa)", version::VERSION));
             separador(ui);
-            fila_info(ui, "Versión", &format!("Kairo {} (vista previa)", env!("CARGO_PKG_VERSION")));
+            let compilacion = if version::COMMIT.is_empty() {
+                "Sin datos de git".to_string()
+            } else {
+                format!("Commit {} · rama {}", version::COMMIT, version::RAMA)
+            };
+            fila_info(ui, "Compilación", &compilacion);
+            if let Some(n) = novedades.first() {
+                separador(ui);
+                fila_info(ui, "Último cambio", &format!("{} ({})", n.texto, version::FECHA_COMMIT));
+            }
             separador(ui);
-            fila_info(ui, "Licencia", "GPL-3.0: código abierto. Puedes usarlo, estudiarlo y mejorarlo.");
+            fila_info(ui, "Compilado el", &version::compilado());
+            if version::con_cambios_sin_commit() {
+                separador(ui);
+                fila_info_color(
+                    ui,
+                    "Atención",
+                    "Este exe se compiló con cambios que todavía no tienen commit: puede traer más de lo que dice la lista.",
+                    AMARILLO,
+                );
+            }
+            ui.add_space(8.0);
+            let mut copiar = false;
+            let mut github = false;
+            ui.horizontal(|ui| {
+                copiar = boton(ui, Some(icono::COPIAR), "Copiar versión", Estilo::Secundario, true).clicked();
+                github = boton(ui, Some(icono::ENLACE), "Ver en GitHub", Estilo::Secundario, true).clicked();
+            });
+            ui.add_space(8.0);
+            if copiar {
+                let texto = format!("Kairo {} ({}, compilado el {})", version::corta(), version::FECHA_COMMIT, version::compilado());
+                ui.output_mut(|o| o.copied_text = texto);
+                self.avisar("Versión copiada.", false);
+            }
+            if github {
+                let _ = std::process::Command::new("explorer").arg("https://github.com/blackbulldesigner/Kairo").spawn();
+            }
+        });
+
+        tarjeta(ui, "Novedades", |ui| {
+            if novedades.is_empty() {
+                fila_info(ui, "Sin datos", "Este exe se compiló sin git: no trae la lista de cambios.");
+            }
+            for (i, n) in novedades.iter().enumerate() {
+                if i > 0 {
+                    separador(ui);
+                }
+                fila_novedad(ui, n.fecha, n.texto, n.commit, i == 0);
+            }
+        });
+
+        tarjeta(ui, "Licencia", |ui| {
+            fila_info(ui, "GPL-3.0", "Código abierto: puedes usarlo, estudiarlo, mejorarlo y compartirlo con su código.");
         });
     }
 }

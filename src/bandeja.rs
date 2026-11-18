@@ -461,7 +461,7 @@ pub fn ejecutar(fondo: bool) {
         }
         windows::Win32::Media::timeBeginPeriod(1);
         crate::autoinicio::reparar();
-        log(&format!("Kairo {} arrancó{}", env!("CARGO_PKG_VERSION"), if fondo { " (con Windows)" } else { "" }));
+        log(&format!("Kairo {} arrancó{}", crate::version::corta(), if fondo { " (con Windows)" } else { "" }));
 
         let Ok(modulo) = GetModuleHandleW(None) else { return };
         let clase = WNDCLASSW { lpfnWndProc: Some(procedimiento), hInstance: modulo.into(), lpszClassName: CLASE, ..Default::default() };

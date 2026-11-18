@@ -19,6 +19,7 @@ mod grabadora;
 mod icono;
 mod registro;
 mod ui;
+mod version;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

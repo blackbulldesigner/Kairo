@@ -14,6 +14,8 @@ PCs de escritorio.
 - **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto.
 - Clic derecho en el ícono: guardar, pausar, abrir la carpeta de clips, ajustes y salir.
 - En Sistema puedes activar **Iniciar con Windows**.
+- **Acerca de** muestra la versión exacta del exe (commit y fecha) y la lista de novedades. Debajo del nombre,
+  en el menú, siempre se ve la versión corta (por ejemplo `v0.2.0 · b820923`).
 
 ## Cómo funciona
 

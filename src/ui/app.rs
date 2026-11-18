@@ -20,10 +20,11 @@ pub enum Pagina {
     Clips,
     Atajos,
     Sistema,
+    AcercaDe,
 }
 
 impl Pagina {
-    pub const TODAS: [Pagina; 5] = [Pagina::Grabacion, Pagina::Audio, Pagina::Clips, Pagina::Atajos, Pagina::Sistema];
+    pub const TODAS: [Pagina; 6] = [Pagina::Grabacion, Pagina::Audio, Pagina::Clips, Pagina::Atajos, Pagina::Sistema, Pagina::AcercaDe];
 
     pub fn nombre(self) -> &'static str {
         match self {
@@ -32,6 +33,7 @@ impl Pagina {
             Pagina::Clips => "Clips",
             Pagina::Atajos => "Atajos",
             Pagina::Sistema => "Sistema",
+            Pagina::AcercaDe => "Acerca de",
         }
     }
 
@@ -42,10 +44,11 @@ impl Pagina {
             Pagina::Clips => icono::CLIPS,
             Pagina::Atajos => icono::TECLADO,
             Pagina::Sistema => icono::AJUSTES,
+            Pagina::AcercaDe => icono::INFO,
         }
     }
 
-    /// Para la línea de comandos: "grabacion", "audio", "clips", "atajos", "sistema".
+    /// Para la línea de comandos: "grabacion", "audio", "clips", "atajos", "sistema", "acerca".
     pub fn desde(s: &str) -> Option<Pagina> {
         match s.to_lowercase().as_str() {
             "grabacion" | "grabación" => Some(Pagina::Grabacion),
@@ -53,6 +56,7 @@ impl Pagina {
             "clips" => Some(Pagina::Clips),
             "atajos" => Some(Pagina::Atajos),
             "sistema" => Some(Pagina::Sistema),
+            "acerca" => Some(Pagina::AcercaDe),
             _ => None,
         }
     }
@@ -231,9 +235,15 @@ impl App {
     fn menu(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
-            logo(ui, 24.0);
+            logo(ui, 26.0);
             ui.add_space(4.0);
-            ui.label(RichText::new("Kairo").family(semibold()).size(16.0).color(TEXTO));
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.label(RichText::new("Kairo").family(semibold()).size(16.0).color(TEXTO));
+                // Siempre a la vista: para saber de un vistazo qué versión es este exe.
+                let color = if crate::version::con_cambios_sin_commit() { AMARILLO } else { TENUE };
+                ui.label(RichText::new(crate::version::corta()).size(11.5).color(color));
+            });
         });
         ui.add_space(18.0);
         for p in Pagina::TODAS {
@@ -304,6 +314,7 @@ impl eframe::App for App {
                         Pagina::Clips => self.pagina_clips(ui),
                         Pagina::Atajos => self.pagina_atajos(ui),
                         Pagina::Sistema => self.pagina_sistema(ui, equipo.as_ref()),
+                        Pagina::AcercaDe => self.pagina_acerca(ui),
                     }
                     ui.add_space(12.0);
                 });
