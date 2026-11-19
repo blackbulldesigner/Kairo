@@ -22,14 +22,8 @@ fn una_linea(ui: &Ui, texto: &str, fuente: FontId, color: Color32, ancho: f32) -
     ui.fonts(|f| f.layout_job(job))
 }
 
-fn abrir(ruta: &std::path::Path) {
-    let _ = std::process::Command::new("explorer").arg(ruta).spawn();
-}
-
 pub(super) fn mostrar_en_carpeta(ruta: &std::path::Path) {
-    let mut arg = std::ffi::OsString::from("/select,");
-    arg.push(ruta.as_os_str());
-    let _ = std::process::Command::new("explorer").arg(arg).spawn();
+    crate::abrir::mostrar(ruta);
 }
 
 impl App {
@@ -72,8 +66,7 @@ impl App {
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if boton(ui, Some(icono::CARPETA_ABIERTA), "Abrir carpeta", Estilo::Secundario, true).clicked() {
-                    let _ = std::fs::create_dir_all(&self.guardada.carpeta);
-                    abrir(&self.guardada.carpeta);
+                    crate::abrir::carpeta(&self.guardada.carpeta);
                 }
             });
         });
@@ -200,7 +193,7 @@ impl App {
                 ui.close_menu();
             }
             if ui.button("Abrir con el reproductor de Windows").clicked() {
-                abrir(&clip.ruta);
+                crate::abrir::archivo(&clip.ruta);
                 ui.close_menu();
             }
             ui.separator();

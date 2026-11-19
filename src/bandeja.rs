@@ -433,8 +433,7 @@ pub fn iniciar_en_fondo() {
 }
 
 fn abrir_carpeta(cfg: &Config) {
-    let _ = std::fs::create_dir_all(&cfg.carpeta);
-    let _ = std::process::Command::new("explorer").arg(&cfg.carpeta).spawn();
+    crate::abrir::carpeta(&cfg.carpeta);
 }
 
 /// La ventana oculta de la grabadora, si está abierta.

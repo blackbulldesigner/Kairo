@@ -459,8 +459,7 @@ impl App {
                 cambiar = boton(ui, Some(icono::EDITAR), "Cambiar…", Estilo::Secundario, true).clicked();
             });
             if abrir {
-                let _ = std::fs::create_dir_all(&self.cfg.carpeta);
-                let _ = std::process::Command::new("explorer").arg(&self.cfg.carpeta).spawn();
+                crate::abrir::carpeta(&self.cfg.carpeta);
             }
             if cambiar {
                 let inicio = if self.cfg.carpeta.exists() { self.cfg.carpeta.clone() } else { config::carpeta_videos() };
@@ -580,9 +579,7 @@ impl App {
                 self.avisar("Diagnóstico copiado: pégalo donde quieras compartirlo.", false);
             }
             if abrir {
-                let dir = config::datos_dir();
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                crate::abrir::carpeta(&config::datos_dir());
             }
         });
 
@@ -639,7 +636,7 @@ impl App {
                 self.avisar("Versión copiada.", false);
             }
             if github {
-                let _ = std::process::Command::new("explorer").arg("https://github.com/blackbulldesigner/Kairo").spawn();
+                crate::abrir::pagina("https://github.com/blackbulldesigner/Kairo");
             }
         });
 
@@ -720,7 +717,7 @@ impl App {
             }
             if let (true, Some(d)) = (pagina, &disponible) {
                 if d.pagina.starts_with("https://github.com/") {
-                    let _ = std::process::Command::new("explorer").arg(&d.pagina).spawn();
+                    crate::abrir::pagina(&d.pagina);
                 }
             }
         });

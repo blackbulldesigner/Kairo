@@ -10,6 +10,7 @@
 //! - `--instalar` o el exe llamado "KairoSetup…": el instalador (`--instalar --sin-ventana` actualiza el
 //!   Kairo instalado sin preguntar); `--desinstalar`: el desinstalador.
 
+mod abrir;
 mod actualizacion;
 mod autoinicio;
 mod bandeja;
