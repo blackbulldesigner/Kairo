@@ -93,6 +93,21 @@ impl App {
                 self.biblioteca.seleccion.extend(primeros);
             }
         }
+        // `KAIRO_PRUEBA_BUCLE=1`: un bucle de mensajes anidado como el de arrastrar (ver `compartir`).
+        if cfg!(feature = "dev") && std::env::var("KAIRO_PRUEBA_BUCLE").is_ok() {
+            static HECHO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !HECHO.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                crate::compartir::probar_bucle_anidado(ui.ctx(), 2.0);
+            }
+        }
+        // `KAIRO_CAPTURA_DISCORD=<n>`: el clip número n (desde 1) se muestra achicándose para Discord.
+        if cfg!(feature = "dev") && self.biblioteca.discord.is_none() {
+            if let Some(n) = std::env::var("KAIRO_CAPTURA_DISCORD").ok().and_then(|n| n.parse::<usize>().ok()) {
+                if let Some(c) = self.biblioteca.visibles().into_iter().nth(n.saturating_sub(1)) {
+                    self.biblioteca.simular_discord(c.ruta, 0.42);
+                }
+            }
+        }
         // Con clips seleccionados: cuántos, cuánto pesan y qué hacer con ellos (Esc deja de seleccionar).
         if !self.biblioteca.seleccion.is_empty() {
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !self.biblioteca.borrando_seleccion {
@@ -190,7 +205,8 @@ impl App {
 
     fn tarjeta_clip(&mut self, ui: &mut Ui, clip: &Clip, ancho: f32) {
         let alto_imagen = (ancho * 9.0 / 16.0).round();
-        let (rect, resp) = ui.allocate_exact_size(vec2(ancho, alto_imagen + 62.0), Sense::click());
+        // Clic para verla y arrastrar para sacarla de la ventana (a Discord, a una carpeta).
+        let (rect, resp) = ui.allocate_exact_size(vec2(ancho, alto_imagen + 62.0), Sense::click_and_drag());
         if !ui.is_rect_visible(rect) {
             return; // fuera de la vista: ni se dibuja ni se pide la miniatura
         }
@@ -240,7 +256,15 @@ impl App {
                 }
             }
         }
-        if h > 0.0 {
+        let para_discord = self.biblioteca.discord.as_ref().filter(|d| d.clip == clip.ruta).map(|d| d.avance());
+        if let Some(f) = para_discord {
+            p.rect_filled(imagen, redondeo, Color32::from_black_alpha(170));
+            let c = imagen.center();
+            p.text(c - vec2(0.0, 10.0), Align2::CENTER_CENTER, format!("Achicando para Discord… {:.0} %", f * 100.0), FontId::new(13.0, semibold()), Color32::WHITE);
+            let barra = Rect::from_center_size(c + vec2(0.0, 14.0), vec2((imagen.width() - 48.0).min(220.0), 4.0));
+            p.rect_filled(barra, 2.0, Color32::from_white_alpha(40));
+            p.rect_filled(Rect::from_min_size(barra.min, vec2(barra.width() * f.clamp(0.0, 1.0), barra.height())), 2.0, ACENTO);
+        } else if h > 0.0 {
             // Un velo y el botón de reproducir, que aparecen de a poco.
             p.rect_filled(imagen, redondeo, Color32::from_black_alpha((60.0 * h) as u8));
             p.circle_filled(imagen.center(), 22.0, ACENTO.gamma_multiply(0.9 * h));
@@ -301,7 +325,7 @@ impl App {
         let resp = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(if modo_seleccion {
             "Clic para seleccionar o sacar de la selección"
         } else {
-            "Clic para verlo · Ctrl+clic para seleccionar · clic derecho para más opciones"
+            "Clic para verlo · arrástralo a Discord o a una carpeta · Ctrl+clic para seleccionar · clic derecho para más opciones"
         });
         if resp.clicked() {
             // Seleccionando (o con Ctrl), el clic suma o saca de la selección; si no, abre el clip.
@@ -310,6 +334,10 @@ impl App {
             } else {
                 self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Ver);
             }
+        }
+        // Arrastrarlo afuera: el archivo (o, si pesa más de 10 MB, su copia para Discord).
+        if resp.drag_started_by(egui::PointerButton::Primary) {
+            self.compartir_clip(ui.ctx(), &clip.ruta, true);
         }
         resp.context_menu(|ui| {
             if ui.button("Ver").clicked() {
@@ -322,6 +350,17 @@ impl App {
             }
             if ui.button("Comprimir…").clicked() {
                 self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Comprimir);
+                ui.close_menu();
+            }
+            if para_discord.is_some() {
+                if ui.button("Cancelar la copia para Discord").clicked() {
+                    if let Some(d) = &self.biblioteca.discord {
+                        d.cancelar.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    ui.close_menu();
+                }
+            } else if ui.button("Copiar para Discord").on_hover_text("Si pesa más de 10 MB, primero se achica una copia").clicked() {
+                self.compartir_clip(ui.ctx(), &clip.ruta, false);
                 ui.close_menu();
             }
             if ui.button("Abrir con el reproductor de Windows").clicked() {
@@ -347,6 +386,46 @@ impl App {
                 ui.close_menu();
             }
         });
+    }
+
+    /// Arrastrar (`arrastrar`) o copiar un clip para mandarlo a Discord. Si pesa más de 10 MB, primero se
+    /// achica una copia y, cuando está, se copia sola al portapapeles.
+    fn compartir_clip(&mut self, ctx: &egui::Context, ruta: &std::path::Path, arrastrar: bool) {
+        if let Some(listo) = crate::medios::discord::listo(ruta) {
+            if arrastrar {
+                crate::compartir::arrastrar(&listo);
+            } else {
+                match crate::compartir::copiar(&[listo]) {
+                    Ok(()) => self.avisar("Copiado: pégalo en Discord (o en una carpeta) con Ctrl+V.", false),
+                    Err(e) => self.avisar(e, true),
+                }
+            }
+            return;
+        }
+        match self.biblioteca.discord.as_ref().map(|d| (d.clip == ruta, d.avance())) {
+            Some((true, f)) => self.avisar(format!("Lo estoy achicando para Discord ({:.0} %): cuando esté, se copia solo.", f * 100.0), false),
+            Some((false, _)) => self.avisar("Espera a que termine el otro clip que se está achicando para Discord.", false),
+            None => {
+                self.biblioteca.preparar_para_discord(ruta, ctx);
+                self.avisar_por("Pesa más de 10 MB: lo achico para Discord. Cuando esté, se copia solo para que lo pegues con Ctrl+V.", false, 6.0);
+            }
+        }
+    }
+
+    /// Si terminó la copia para Discord, va al portapapeles y se avisa (en cualquier página).
+    pub(super) fn revisar_discord(&mut self) {
+        let Some((_, r)) = self.biblioteca.discord_terminado() else { return };
+        match r {
+            None => self.avisar("Se canceló la copia para Discord.", false),
+            Some(Ok(copia)) => {
+                let peso = std::fs::metadata(&copia).map(|m| m.len()).unwrap_or(0);
+                match crate::compartir::copiar(&[copia]) {
+                    Ok(()) => self.avisar_por(format!("Listo para Discord ({}): pégalo en el chat con Ctrl+V, o arrastra el clip.", texto_bytes(peso)), false, 8.0),
+                    Err(e) => self.avisar(e, true),
+                }
+            }
+            Some(Err(e)) => self.avisar_por(format!("No se pudo achicar para Discord: {e}"), true, 8.0),
+        }
     }
 
     /// Ventanitas para renombrar y para confirmar el borrado.

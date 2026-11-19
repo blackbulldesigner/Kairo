@@ -5,7 +5,9 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions};
@@ -70,6 +72,22 @@ pub struct Biblioteca {
     pub borrando_seleccion: bool,
     /// Clips que ya se mandaron a reparar en esta sesión.
     reparados: HashSet<PathBuf>,
+    /// Copia para Discord que se está comprimiendo (una a la vez).
+    pub discord: Option<ParaDiscord>,
+}
+
+/// Un clip que se está achicando para Discord, en otro hilo.
+pub struct ParaDiscord {
+    pub clip: PathBuf,
+    pub progreso: Arc<Mutex<f32>>,
+    pub cancelar: Arc<AtomicBool>,
+    resultado: Arc<Mutex<Option<Result<PathBuf, String>>>>,
+}
+
+impl ParaDiscord {
+    pub fn avance(&self) -> f32 {
+        self.progreso.lock().map(|p| *p).unwrap_or(0.0)
+    }
 }
 
 impl Biblioteca {
@@ -78,6 +96,8 @@ impl Biblioteca {
         let (enviar, recibir) = mpsc::channel::<Resultado>();
         let ctx = ctx.clone();
         std::thread::spawn(move || hilo_miniaturas(pedidos, enviar, ctx));
+        // Las copias para Discord de otros días ya no hacen falta.
+        std::thread::spawn(crate::medios::discord::limpiar_viejas);
         Self {
             clips: Vec::new(),
             carpeta: PathBuf::new(),
@@ -94,6 +114,7 @@ impl Biblioteca {
             reparados: HashSet::new(),
             seleccion: HashSet::new(),
             borrando_seleccion: false,
+            discord: None,
         }
     }
 
@@ -232,6 +253,53 @@ impl Biblioteca {
         if let Some(c) = self.clips.iter_mut().find(|c| c.ruta == ruta) {
             c.favorito = d.favorito;
         }
+    }
+
+    /// Empieza a achicar el clip para Discord (en otro hilo, con prioridad baja). Falso si ya hay otro.
+    pub fn preparar_para_discord(&mut self, clip: &Path, ctx: &egui::Context) -> bool {
+        if self.discord.is_some() {
+            return false;
+        }
+        let d = ParaDiscord {
+            clip: clip.to_path_buf(),
+            progreso: Arc::new(Mutex::new(0.0)),
+            cancelar: Arc::new(AtomicBool::new(false)),
+            resultado: Arc::new(Mutex::new(None)),
+        };
+        let (clip, progreso, cancelar, resultado, ctx) = (d.clip.clone(), d.progreso.clone(), d.cancelar.clone(), d.resultado.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let avance = |f: f32| {
+                if let Ok(mut p) = progreso.lock() {
+                    *p = f;
+                }
+                ctx.request_repaint();
+            };
+            let r = crate::medios::discord::preparar(&clip, &avance, &cancelar).map_err(|e| format!("{e:#}"));
+            if let Ok(mut x) = resultado.lock() {
+                *x = Some(r);
+            }
+            ctx.request_repaint();
+        });
+        self.discord = Some(d);
+        true
+    }
+
+    /// Para las capturas de prueba: el clip se muestra como si se estuviera achicando para Discord.
+    pub fn simular_discord(&mut self, clip: PathBuf, avance: f32) {
+        self.discord = Some(ParaDiscord {
+            clip,
+            progreso: Arc::new(Mutex::new(avance)),
+            cancelar: Arc::new(AtomicBool::new(false)),
+            resultado: Arc::new(Mutex::new(None)),
+        });
+    }
+
+    /// Si terminó la copia para Discord: (clip, la copia o el error; `None` si se canceló).
+    pub fn discord_terminado(&mut self) -> Option<(PathBuf, Option<Result<PathBuf, String>>)> {
+        let r = self.discord.as_ref()?.resultado.lock().ok().and_then(|mut x| x.take())?;
+        let d = self.discord.take()?;
+        let cancelado = d.cancelar.load(Ordering::SeqCst);
+        Some((d.clip, if cancelado { None } else { Some(r) }))
     }
 
     /// Manda los clips seleccionados (y sus datos) a la Papelera. Devuelve cuántos.

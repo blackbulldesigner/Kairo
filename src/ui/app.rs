@@ -290,7 +290,12 @@ impl App {
     }
 
     pub(super) fn avisar(&mut self, texto: impl Into<String>, error: bool) {
-        self.aviso = Some((texto.into(), error, self.ahora + 4.0));
+        self.avisar_por(texto, error, 4.0);
+    }
+
+    /// Un aviso que queda más tiempo (para los que hay que leer con calma).
+    pub(super) fn avisar_por(&mut self, texto: impl Into<String>, error: bool, segundos: f64) {
+        self.aviso = Some((texto.into(), error, self.ahora + segundos));
     }
 
     fn guardar(&mut self) {
@@ -448,6 +453,7 @@ impl eframe::App for App {
         self.sincronizar_atajos();
         self.leer_estado(ctx);
         self.actualizador.revisar_cierre(ctx);
+        self.revisar_discord();
         let equipo = self.equipo.lock().ok().and_then(|e| e.clone());
         let nuevo_clip = self.estado.as_ref().and_then(|e| e.ultimo_clip.clone());
         if nuevo_clip.is_some() && nuevo_clip != self.ultimo_clip_visto {

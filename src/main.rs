@@ -13,6 +13,7 @@
 mod abrir;
 mod actualizacion;
 mod autoinicio;
+mod compartir;
 mod bandeja;
 mod config;
 mod datos_clip;

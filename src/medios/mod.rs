@@ -2,6 +2,7 @@
 //! proceso de la bandeja) no lo usa, así que mientras juegas con la ventana cerrada no pesa nada.
 
 pub mod comprimir;
+pub mod discord;
 pub mod exportar;
 pub mod reproductor;
 

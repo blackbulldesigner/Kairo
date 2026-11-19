@@ -26,9 +26,14 @@ PCs de escritorio.
 - En la Biblioteca, un clic abre el clip en el reproductor de Kairo (Espacio pausa, ← → saltan 5 s). En
   **Editar** lo recortas y cambias el volumen de cada pista (por ejemplo, sin Discord) y en **Comprimir** lo
   achicas para compartir (también "Para Discord": menos de 10 MB). Siempre se guarda como clip nuevo.
+- **A Discord:** arrastra la tarjeta del clip al chat (o a una carpeta), o clic derecho → **Copiar para Discord**
+  y pégalo con Ctrl+V. Si pesa más de 10 MB, Kairo primero achica una copia (sin tocar el clip) y la deja copiada.
+- **Varios a la vez:** Ctrl+clic o el círculo de cada tarjeta los selecciona; la barra de arriba los manda juntos
+  a la Papelera.
 - **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto.
 - Con un segundo atajo ("Guardar clip largo", en Atajos) guardas un clip más largo (por ejemplo, 2 min) por si la
-  jugada empezó antes. La RAM la marca el más largo de los dos; sin ese atajo no usa RAM de más.
+  jugada empezó antes. La RAM la marca el más largo de los dos; con el interruptor **Clip largo** apagado no usa
+  RAM de más.
 - Clic derecho en el ícono: guardar, pausar, abrir la carpeta de clips, ajustes y salir.
 - En la Biblioteca, la estrella marca un clip como favorito. En Guardado → **Limpieza automática** Kairo borra
   solo los clips viejos (más de N días, o los más viejos si todos juntos pasan de X GB), a la Papelera o del todo.
