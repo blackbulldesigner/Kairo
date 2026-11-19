@@ -1,10 +1,12 @@
-//! La ventana de ajustes: menú a la izquierda, la página elegida al centro y abajo Descartar / Guardar.
+//! La ventana de Kairo: arriba las páginas como pestañas (y el estado y la actualización como píldoras), la
+//! página elegida a todo el ancho, y abajo Descartar / Guardar, que sube solo cuando hay cambios.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use eframe::egui::{self, Align, CentralPanel, Frame, Layout, Margin, RichText, ScrollArea, SidePanel, TopBottomPanel};
+use eframe::egui::{self, Align, CentralPanel, Frame, Layout, Margin, RichText, ScrollArea, TopBottomPanel};
 
+use super::animar;
 use super::captura::Pedido;
 use super::tema::{self, *};
 use super::widgets::*;
@@ -37,18 +39,6 @@ impl Pagina {
             Pagina::Atajos => "Atajos",
             Pagina::Sistema => "Sistema",
             Pagina::AcercaDe => "Acerca de",
-        }
-    }
-
-    fn icono(self) -> &'static str {
-        match self {
-            Pagina::Biblioteca => icono::CLIPS,
-            Pagina::Grabacion => icono::VIDEO,
-            Pagina::Audio => icono::MICROFONO,
-            Pagina::Guardado => icono::CARPETA_ABIERTA,
-            Pagina::Atajos => icono::TECLADO,
-            Pagina::Sistema => icono::AJUSTES,
-            Pagina::AcercaDe => icono::INFO,
         }
     }
 
@@ -86,7 +76,9 @@ pub struct App {
     /// Se le pidió a la grabadora que suelte los atajos (mientras se elige uno nuevo).
     atajos_suspendidos: bool,
     pub(super) autoinicio: bool,
-    alto_estado: f32,
+    /// Página (y si hay un clip abierto) del cuadro anterior, y cuándo cambió: para la animación de entrada.
+    vista_anterior: (Pagina, bool),
+    cambio_de_vista: f64,
     /// Programas abiertos (para elegir el juego a mano) y cuándo volver a leerlos.
     pub(super) programas: Vec<crate::grabadora::juego::Programa>,
     pub(super) programas_hasta: f64,
@@ -158,7 +150,8 @@ impl App {
             proxima_lectura: 0.0,
             atajos_suspendidos: false,
             autoinicio: crate::autoinicio::activo(),
-            alto_estado: 64.0,
+            vista_anterior: (pagina, false),
+            cambio_de_vista: -1.0,
             programas: Vec::new(),
             programas_hasta: 0.0,
             biblioteca: super::biblioteca::Biblioteca::new(&cc.egui_ctx),
@@ -200,78 +193,92 @@ impl App {
         }
     }
 
-    fn tarjeta_estado(&mut self, ui: &mut egui::Ui) {
+    /// Píldora del estado de la grabadora (arriba a la derecha). Con la grabadora cerrada, es el botón para
+    /// iniciarla; al pasar el mouse, el detalle.
+    fn pildora_estado(&mut self, ui: &mut egui::Ui, compacta: bool) {
         let atajo = self.guardada.atajo(CualAtajo::Guardar).map(|a| a.texto());
-        let (color, titulo, detalle, iniciar) = match &self.estado {
-            None => (TENUE, "Grabadora cerrada".to_string(), "Kairo no está grabando.".to_string(), true),
-            Some(e) if e.pausado => (AMARILLO, "En pausa".into(), "Reanúdala desde el ícono de la bandeja.".into(), false),
+        let (color, texto, detalle) = match &self.estado {
+            None => (TENUE, "Iniciar grabadora".to_string(), "Kairo no está grabando: clic para empezar.".to_string()),
+            Some(e) if e.pausado => (AMARILLO, "En pausa".into(), "Reanúdala desde el ícono de la bandeja.".into()),
             Some(e) if e.grabando => {
                 let seg = crate::config::texto_duracion(self.guardada.segundos);
-                let tecla = atajo.map(|a| format!(" · {a} guarda")).unwrap_or_default();
                 let ahorro = if e.ahorro { "\nAhorro con batería: 720p, Ligera" } else { "" };
                 let juego = e.juego.as_ref().map(|j| format!("\nJuego: {j}")).unwrap_or_default();
-                (VERDE, "Grabando".into(), format!("Últimos {seg}{tecla}{juego}{ahorro}"), false)
+                let texto = match &atajo {
+                    Some(a) => format!("Grabando · {a}"),
+                    None => "Grabando".into(),
+                };
+                (VERDE, texto, format!("Guarda los últimos {seg}{juego}{ahorro}"))
             }
             Some(e) => match &e.error {
-                Some(err) => (ROJO, "No puede grabar".into(), err.clone(), false),
-                None => (TENUE, "Preparando…".into(), "Abriendo la captura.".into(), false),
+                Some(err) => (ROJO, "No puede grabar".into(), err.clone()),
+                None => (TENUE, "Preparando…".into(), "Abriendo la captura.".into()),
             },
         };
-        Frame::none().fill(FONDO).stroke(egui::Stroke::new(1.0_f32, BORDE)).rounding(8.0).inner_margin(Margin::same(11.0)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 3.0;
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                ui.painter().circle_filled(r.center(), 4.0, color);
-                ui.label(RichText::new(titulo).family(semibold()).size(13.0).color(TEXTO));
-            });
-            ui.label(RichText::new(detalle).size(12.0).color(SECUNDARIO));
-            if iniciar {
-                ui.add_space(4.0);
-                if boton(ui, None, "Iniciar grabadora", Estilo::Secundario, true).clicked() {
-                    bandeja::iniciar_en_fondo();
-                    self.proxima_lectura = self.ahora + 0.5;
-                }
-            }
-        });
+        // Compacta (ventana angosta): solo el punto; el texto pasa a la ayuda.
+        let detalle = if compacta { format!("{texto}\n{detalle}") } else { detalle };
+        let g = ui.fonts(|f| f.layout_no_wrap(if compacta { String::new() } else { texto }, egui::FontId::proportional(12.5), TEXTO));
+        let ancho = if compacta { 30.0 } else { g.size().x + 34.0 };
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(ancho, 30.0), egui::Sense::click());
+        let h = animar::hacia(ui.ctx(), resp.id.with("h"), resp.hovered());
+        let fondo = mezclar(mezclar(FONDO, color, 0.10), mezclar(FONDO, color, 0.18), h);
+        let borde = mezclar(mezclar(BORDE, color, 0.30), mezclar(BORDE, color, 0.55), h);
+        let p = ui.painter();
+        p.rect(rect, 15.0, fondo, egui::Stroke::new(1.0_f32, borde));
+        let x_punto = if compacta { rect.center().x } else { rect.left() + 14.0 };
+        p.circle_filled(egui::pos2(x_punto, rect.center().y), 4.0, color);
+        p.galley(egui::pos2(rect.left() + 24.0, rect.center().y - g.size().y / 2.0), g, TEXTO);
+        let resp = resp.on_hover_text(detalle);
+        if self.estado.is_none() && resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            bandeja::iniciar_en_fondo();
+            self.proxima_lectura = self.ahora + 0.5;
+        }
     }
 
-    /// Arriba del estado, si hay una versión nueva: aviso con el botón "Actualizar" y su progreso.
-    fn aviso_actualizacion(&mut self, ui: &mut egui::Ui) {
+    /// Píldora de la versión nueva (si hay): clic para actualizar, con el progreso adentro.
+    fn pildora_actualizacion(&mut self, ui: &mut egui::Ui, compacta: bool) {
         use super::actualizar::Paso;
         let paso = self.actualizador.paso();
-        let (titulo, detalle, progreso, boton_texto) = match &paso {
-            Paso::Hay(d) => (format!("Kairo {} disponible", d.version), "Tus ajustes y tus clips no se tocan.".to_string(), None, Some("Actualizar")),
-            Paso::Bajando(d, f) => (format!("Bajando Kairo {}…", d.version), format!("{:.0} %", f * 100.0), Some(*f), None),
-            Paso::Instalando => ("Instalando…".to_string(), "Kairo se cierra y se vuelve a abrir.".to_string(), Some(1.0), None),
-            Paso::Error(_, Some(d)) => (format!("Kairo {} disponible", d.version), "No se pudo actualizar: mira Acerca de.".to_string(), None, Some("Reintentar")),
+        let (texto, ayuda, progreso) = match &paso {
+            Paso::Hay(d) => (format!("{}  Kairo {}", icono::DESCARGAR, d.version), "Actualizar ahora (tus ajustes y tus clips no se tocan)".to_string(), None),
+            Paso::Bajando(_, f) => (format!("Bajando {:.0} %", f * 100.0), "Bajando la versión nueva".to_string(), Some(*f)),
+            Paso::Instalando => ("Instalando…".to_string(), "Kairo se cierra y se vuelve a abrir".to_string(), Some(1.0)),
+            Paso::Error(_, Some(_)) => ("No se pudo actualizar".to_string(), "Ver el detalle en Acerca de".to_string(), None),
             _ => return,
         };
-        Frame::none().fill(SELECCION).stroke(egui::Stroke::new(1.0_f32, ACENTO_APAGADO)).rounding(8.0).inner_margin(Margin::same(11.0)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 3.0;
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(icono::DESCARGAR).family(iconos()).size(13.0).color(TEXTO_SEL));
-                ui.label(RichText::new(titulo).family(semibold()).size(13.0).color(TEXTO_SEL));
-            });
-            ui.label(RichText::new(detalle).size(12.0).color(SECUNDARIO));
-            if let Some(f) = progreso {
-                ui.add_space(3.0);
-                ui.add(egui::ProgressBar::new(f).desired_height(5.0).fill(ACENTO));
+        let error = matches!(paso, Paso::Error(..));
+        let fuente = egui::FontId::proportional(12.5);
+        // El ícono va con su fuente; el resto con la normal.
+        let mut job = egui::text::LayoutJob::default();
+        let ayuda = if compacta { format!("{}\n{ayuda}", texto.trim_start_matches(icono::DESCARGAR).trim()) } else { ayuda };
+        if compacta {
+            // Solo el ícono (y el texto en la ayuda).
+            let ic = if error { icono::INFO } else { icono::DESCARGAR };
+            job.append(ic, 0.0, egui::TextFormat { font_id: egui::FontId::new(13.0, iconos()), color: if error { AMARILLO } else { TEXTO_SEL }, ..Default::default() });
+        } else if let Some(resto) = texto.strip_prefix(icono::DESCARGAR) {
+            job.append(icono::DESCARGAR, 0.0, egui::TextFormat { font_id: egui::FontId::new(12.5, iconos()), color: TEXTO_SEL, ..Default::default() });
+            job.append(resto, 0.0, egui::TextFormat { font_id: fuente.clone(), color: TEXTO_SEL, ..Default::default() });
+        } else {
+            job.append(&texto, 0.0, egui::TextFormat { font_id: fuente, color: if error { AMARILLO } else { TEXTO_SEL }, ..Default::default() });
+        }
+        let g = ui.fonts(|f| f.layout_job(job));
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(g.size().x + 24.0, 30.0), egui::Sense::click());
+        let h = animar::hacia(ui.ctx(), resp.id.with("h"), resp.hovered());
+        let p = ui.painter();
+        p.rect(rect, 15.0, mezclar(SELECCION, ACENTO_APAGADO, h), egui::Stroke::new(1.0_f32, mezclar(ACENTO_APAGADO, ACENTO, h)));
+        if let Some(f) = progreso {
+            let mut lleno = rect.shrink(2.0);
+            lleno.set_right(lleno.left() + lleno.width() * f);
+            p.rect_filled(lleno, 13.0, ACENTO.gamma_multiply(0.45));
+        }
+        p.galley(egui::pos2(rect.left() + 12.0, rect.center().y - g.size().y / 2.0), g, TEXTO_SEL);
+        if resp.on_hover_text(ayuda).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            match paso {
+                Paso::Hay(_) => self.actualizador.actualizar(ui.ctx()),
+                Paso::Error(..) => self.pagina = Pagina::AcercaDe,
+                _ => {}
             }
-            if let Some(t) = boton_texto {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if boton(ui, None, t, Estilo::Primario, true).clicked() {
-                        self.actualizador.actualizar(ui.ctx());
-                    }
-                    if boton(ui, None, "Qué trae", Estilo::Texto, true).clicked() {
-                        self.pagina = Pagina::AcercaDe;
-                    }
-                });
-            }
-        });
-        ui.add_space(8.0);
+        }
     }
 
     pub(super) fn avisar(&mut self, texto: impl Into<String>, error: bool) {
@@ -327,63 +334,101 @@ impl App {
         }
     }
 
-    fn menu(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.add_space(6.0);
-            logo(ui, 26.0);
+    /// Barra de arriba: logo y versión, las páginas como pestañas, y a la derecha el estado y la actualización.
+    fn barra_superior(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_centered(|ui| {
+            logo(ui, 24.0);
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(RichText::new("Kairo").family(semibold()).size(16.0).color(TEXTO));
+                ui.add_space(1.0);
+                ui.label(RichText::new("Kairo").family(semibold()).size(14.5).color(TEXTO));
                 // Siempre a la vista: para saber de un vistazo qué versión es este exe.
                 let color = if crate::version::con_cambios_sin_commit() { AMARILLO } else { TENUE };
-                ui.label(RichText::new(crate::version::corta()).size(11.5).color(color));
+                ui.label(RichText::new(crate::version::corta()).size(10.5).color(color));
             });
-        });
-        ui.add_space(18.0);
-        for p in Pagina::TODAS {
-            if item_menu(ui, p.icono(), p.nombre(), self.pagina == p).clicked() {
-                self.pagina = p;
+            ui.add_space(18.0);
+            let nombres: Vec<&str> = Pagina::TODAS.iter().map(|p| p.nombre()).collect();
+            let actual = Pagina::TODAS.iter().position(|p| *p == self.pagina).unwrap_or(0);
+            // ¿Entran las pestañas y las píldoras completas? Si no, las píldoras se achican (solo el punto o el ícono).
+            let ancho_pestanas: f32 = nombres
+                .iter()
+                .map(|n| ui.fonts(|f| f.layout_no_wrap(n.to_string(), egui::FontId::proportional(13.5), TEXTO).size().x) + 24.0)
+                .sum();
+            let hay_version = self.actualizador.disponible().is_some() || matches!(self.actualizador.paso(), super::actualizar::Paso::Instalando);
+            let pildoras = 150.0 + if hay_version { 130.0 } else { 0.0 };
+            let compactas = ui.available_width() < ancho_pestanas + pildoras + 24.0;
+            if let Some(i) = pestanas(ui, "paginas", actual, &nombres, 56.0) {
+                let nueva = Pagina::TODAS[i];
+                // Otro clic en Biblioteca (con un clip abierto) vuelve a la cuadrícula.
+                if nueva == Pagina::Biblioteca && self.pagina == Pagina::Biblioteca {
+                    self.visor = None;
+                }
+                self.pagina = nueva;
                 self.capturando = None;
             }
-            ui.add_space(2.0);
-        }
-        // El aviso de actualización y el estado de la grabadora, pegados abajo (su alto se mide en el cuadro
-        // anterior).
-        ui.add_space((ui.available_height() - self.alto_estado).max(0.0));
-        let r = ui.vertical(|ui| {
-            self.aviso_actualizacion(ui);
-            self.tarjeta_estado(ui);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                self.pildora_estado(ui, compactas);
+                ui.add_space(6.0);
+                self.pildora_actualizacion(ui, compactas);
+            });
         });
-        let alto = r.response.rect.height();
-        if (alto - self.alto_estado).abs() > 0.5 {
-            self.alto_estado = alto;
-            ui.ctx().request_repaint();
-        }
     }
 
-    fn pie(&mut self, ui: &mut egui::Ui) {
-        let hay_cambios = self.cfg != self.guardada;
+    /// "Guardar cambios" y "Descartar": sube desde abajo cuando hay cambios sin guardar.
+    fn barra_guardar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
-            if let Some((texto, error, hasta)) = self.aviso.clone() {
-                if self.ahora < hasta {
-                    ui.label(RichText::new(texto).size(12.5).color(if error { ROJO } else { VERDE }));
-                    ui.ctx().request_repaint_after(Duration::from_secs_f64((hasta - self.ahora).max(0.05)));
-                } else {
-                    self.aviso = None;
-                }
-            }
+            ui.label(RichText::new(icono::INFO).family(iconos()).size(13.0).color(TEXTO_SEL));
+            ui.label(RichText::new("Tienes cambios sin guardar").size(13.0).color(TEXTO));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if boton(ui, None, "Guardar cambios", Estilo::Primario, hay_cambios).clicked() {
+                if boton(ui, None, "Guardar cambios", Estilo::Primario, true).clicked() {
                     self.guardar();
                 }
                 ui.add_space(4.0);
-                if boton(ui, None, "Descartar", Estilo::Texto, hay_cambios).clicked() {
+                if boton(ui, None, "Descartar", Estilo::Texto, true).clicked() {
                     self.cfg = self.guardada.clone();
                     self.capturando = None;
                 }
             });
         });
+    }
+
+    /// El último aviso ("Cambios guardados", errores…) flota abajo al centro: entra subiendo y se va solo.
+    fn aviso_flotante(&mut self, ctx: &egui::Context, sobre: f32) {
+        let vigente = self.aviso.as_ref().is_some_and(|(_, _, hasta)| self.ahora < *hasta);
+        let t = animar::suave(ctx, egui::Id::new("aviso"), vigente as u8 as f32, 0.25);
+        if let Some((_, _, hasta)) = &self.aviso {
+            if vigente {
+                ctx.request_repaint_after(Duration::from_secs_f64((hasta - self.ahora).max(0.05)));
+            } else if t <= 0.001 {
+                self.aviso = None;
+            }
+        }
+        let Some((texto, error, _)) = self.aviso.clone() else { return };
+        if t <= 0.001 {
+            return;
+        }
+        let color = if error { ROJO } else { VERDE };
+        egui::Area::new(egui::Id::new("aviso_area"))
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -(sobre + 18.0) + (1.0 - t) * 16.0))
+            .order(egui::Order::Foreground)
+            .interactable(false)
+            .show(ctx, |ui| {
+                ui.set_opacity(t);
+                Frame::none()
+                    .fill(PANEL)
+                    .stroke(egui::Stroke::new(1.0_f32, mezclar(BORDE, color, 0.45)))
+                    .rounding(10.0)
+                    .inner_margin(Margin::symmetric(14.0, 9.0))
+                    .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 6.0), blur: 18.0, spread: 0.0, color: egui::Color32::from_black_alpha(110) })
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                            ui.painter().circle_filled(r.center(), 4.0, color);
+                            ui.label(RichText::new(texto).size(12.5).color(TEXTO));
+                        });
+                    });
+            });
     }
 }
 
@@ -412,33 +457,47 @@ impl eframe::App for App {
             self.biblioteca.actualizar(&carpeta, self.ahora, ctx);
         }
 
-        // En la Biblioteca no hay nada que guardar: el pie solo aparece si quedaron cambios de otra página
-        // (o un aviso, como "se mandó a la Papelera").
-        let con_aviso = self.aviso.as_ref().is_some_and(|(_, _, hasta)| self.ahora < *hasta);
-        if self.pagina != Pagina::Biblioteca || self.cfg != self.guardada || con_aviso {
+        TopBottomPanel::top("barra")
+            .exact_height(56.0)
+            .frame(Frame::none().fill(PANEL).inner_margin(Margin::symmetric(18.0, 0.0)).stroke(egui::Stroke::new(1.0_f32, BORDE)))
+            .show(ctx, |ui| self.barra_superior(ui));
+
+        // La barra de guardar sube desde abajo cuando hay cambios (y baja al guardar o descartar).
+        let t_guardar = animar::suave(ctx, egui::Id::new("barra_guardar"), (self.cfg != self.guardada) as u8 as f32, 0.22);
+        let alto_guardar = 58.0 * t_guardar;
+        if alto_guardar > 0.5 {
             TopBottomPanel::bottom("pie")
-                .exact_height(58.0)
-                .frame(Frame::none().fill(PANEL).inner_margin(Margin::symmetric(20.0, 0.0)))
-                .show(ctx, |ui| self.pie(ui));
+                .exact_height(alto_guardar)
+                .frame(Frame::none().fill(PANEL).inner_margin(Margin::symmetric(20.0, 0.0)).stroke(egui::Stroke::new(1.0_f32, BORDE)))
+                .show(ctx, |ui| self.barra_guardar(ui));
+        }
+        self.aviso_flotante(ctx, alto_guardar);
+
+        // Al cambiar de página (o abrir un clip), lo nuevo entra con un fundido y sube un poquito.
+        let vista = (self.pagina, self.visor.is_some());
+        if vista != self.vista_anterior {
+            self.vista_anterior = vista;
+            self.cambio_de_vista = self.ahora;
+        }
+        let entrada = (((self.ahora - self.cambio_de_vista) / 0.28) as f32).clamp(0.0, 1.0);
+        let entrada = 1.0 - (1.0 - entrada).powi(3);
+        if entrada < 1.0 {
+            ctx.request_repaint();
         }
 
-        SidePanel::left("menu")
-            .exact_width(214.0)
-            .resizable(false)
-            .frame(Frame::none().fill(PANEL).inner_margin(Margin { left: 12.0, right: 12.0, top: 16.0, bottom: 14.0 }))
-            .show(ctx, |ui| self.menu(ui));
-
-        CentralPanel::default().frame(Frame::none().fill(FONDO).inner_margin(Margin { left: 30.0, right: 18.0, top: 24.0, bottom: 0.0 })).show(
+        CentralPanel::default().frame(Frame::none().fill(FONDO).inner_margin(Margin { left: 28.0, right: 20.0, top: 0.0, bottom: 0.0 })).show(
             ctx,
             |ui| {
+                ui.set_opacity(entrada);
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    ui.add_space(22.0 + (1.0 - entrada) * 14.0);
                     // Columna de hasta 960 puntos, centrada si sobra lugar (ventana grande).
                     let ancho = ui.available_width();
                     // La biblioteca aprovecha más ancho (más columnas de clips).
                     let maximo = match self.pagina {
                         Pagina::Biblioteca if self.visor.is_some() => 1200.0,
-                        Pagina::Biblioteca => 1500.0,
-                        _ => 960.0,
+                        Pagina::Biblioteca => 1700.0,
+                        _ => 900.0,
                     };
                     let contenido = ancho.min(maximo);
                     let margen = ((ancho - contenido) / 2.0).floor().max(0.0);

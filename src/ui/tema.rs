@@ -33,16 +33,12 @@ pub const AMARILLO: Color32 = Color32::from_rgb(0xE8, 0xB0, 0x4B);
 
 /// Íconos de Segoe MDL2 Assets (viene con Windows 10 y 11).
 pub mod icono {
-    pub const VIDEO: &str = "\u{E714}";
     pub const MONITOR: &str = "\u{E7F4}";
     pub const JUEGO: &str = "\u{E7FC}";
-    pub const MICROFONO: &str = "\u{E720}";
     /// Pila de fotogramas.
     pub const CLIPS: &str = "\u{E8B9}";
     /// Carpeta horizontal (la E8B7 de MDL2 sale vertical y parece una tablet).
     pub const CARPETA_ABIERTA: &str = "\u{ED25}";
-    pub const TECLADO: &str = "\u{E765}";
-    pub const AJUSTES: &str = "\u{E713}";
     pub const COPIAR: &str = "\u{E8C8}";
     pub const EDITAR: &str = "\u{E70F}";
     pub const INFO: &str = "\u{E946}";
@@ -51,6 +47,7 @@ pub mod icono {
     /// Tacho de basura.
     pub const QUITAR: &str = "\u{E74D}";
     pub const DESCARGAR: &str = "\u{E896}";
+    pub const BUSCAR: &str = "\u{E721}";
     pub const REPRODUCIR: &str = "\u{E768}";
     pub const PAUSA: &str = "\u{E769}";
     pub const ATRAS: &str = "\u{E72B}";

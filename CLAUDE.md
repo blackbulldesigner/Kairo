@@ -34,7 +34,11 @@ Ver `README.md` para el plan por fases.
 ## Interfaz
 
 - Textos en español neutro, tratando de "tú" ("Aprieta", "Elige").
-- Estilo oscuro tomado de Transcribichad: colores y widgets en `src/ui/tema.rs` y `src/ui/widgets.rs`.
+- Estilo "Estudio": pestañas arriba (con el estado y la actualización como píldoras a la derecha), el contenido a
+  todo el ancho, y los colores oscuros de siempre (`src/ui/tema.rs`; widgets en `src/ui/widgets.rs`).
+- Animaciones suaves con `src/ui/animar.rs` (`suave` y `hacia`: ease-out, piden cuadros solo mientras algo se
+  mueve). Hover y selección se animan en cada widget; la página nueva entra con fundido; la barra de guardar sube.
+- `KAIRO_CAPTURA_HOVER=<nombre del clip>` muestra esa tarjeta de la biblioteca con el mouse encima en la captura.
 - Para revisar una página sin abrirla a mano: `cargo run --features dev -- --captura-ui <pagina> <archivo.png>`.
 
 ## Código

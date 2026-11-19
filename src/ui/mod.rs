@@ -2,6 +2,7 @@
 //! así que no pesa nada mientras juegas.
 
 mod actualizar;
+mod animar;
 mod app;
 pub mod biblioteca;
 pub mod captura;
@@ -32,12 +33,12 @@ pub fn abrir_ajustes(captura: Option<captura::Pedido>) -> eframe::Result<()> {
     } else {
         None
     };
-    let tamano = captura.as_ref().and_then(|c| c.tamano).unwrap_or([980.0, 680.0]);
+    let tamano = captura.as_ref().and_then(|c| c.tamano).unwrap_or([1120.0, 740.0]);
     let opciones = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(TITULO)
             .with_inner_size(tamano)
-            .with_min_inner_size([820.0, 560.0])
+            .with_min_inner_size([960.0, 600.0])
             .with_icon(icono_app()),
         centered: true,
         ..Default::default()

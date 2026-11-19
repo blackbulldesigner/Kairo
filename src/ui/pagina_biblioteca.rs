@@ -4,6 +4,7 @@ use eframe::egui::{self, pos2, text::LayoutJob, vec2, Align2, Color32, CursorIco
 
 use super::app::App;
 use super::biblioteca::{hace_cuanto, texto_duracion, Clip, Orden};
+use super::animar;
 use super::tema::*;
 use super::visor::Modo;
 use super::widgets::*;
@@ -40,9 +41,10 @@ impl App {
         // Barra: búsqueda, orden y carpeta.
         ui.horizontal(|ui| {
             let busqueda = egui::TextEdit::singleline(&mut self.biblioteca.busqueda)
-                .hint_text("Buscar por nombre o juego")
-                .desired_width(260.0)
-                .margin(egui::Margin::symmetric(10.0, 7.0));
+                .hint_text("Buscar clips por nombre o juego")
+                .font(FontId::proportional(14.0))
+                .desired_width((ui.available_width() - 330.0).max(240.0))
+                .margin(egui::Margin { left: 36.0, right: 12.0, top: 9.0, bottom: 9.0 });
             ui.scope(|ui| {
                 // Como el resto de los controles: fondo hundido, borde suave y esquinas redondeadas.
                 let v = ui.visuals_mut();
@@ -51,7 +53,13 @@ impl App {
                 v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, SEGMENTO_BORDE);
                 v.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACENTO);
                 v.selection.stroke = Stroke::new(1.0_f32, ACENTO);
-                ui.add(busqueda);
+                v.widgets.inactive.rounding = Rounding::same(10.0);
+                v.widgets.hovered.rounding = Rounding::same(10.0);
+                v.widgets.active.rounding = Rounding::same(10.0);
+                // (El rectángulo que devuelve es el del texto, adentro del margen: el ícono va en el margen.)
+                let r = ui.add(busqueda);
+                let color = if r.has_focus() { ACENTO } else { TENUE };
+                ui.painter().text(pos2(r.rect.left() - 18.0, r.rect.center().y), Align2::CENTER_CENTER, icono::BUSCAR, FontId::new(14.0, iconos()), color);
             });
             ui.add_space(6.0);
             let orden = match self.biblioteca.orden {
@@ -138,13 +146,23 @@ impl App {
         if !ui.is_rect_visible(rect) {
             return; // fuera de la vista: ni se dibuja ni se pide la miniatura
         }
-        let hover = resp.hovered();
+        // Para las capturas de prueba: `KAIRO_CAPTURA_HOVER=<nombre>` muestra ese clip con el mouse encima.
+        let forzado = cfg!(feature = "dev") && std::env::var("KAIRO_CAPTURA_HOVER").is_ok_and(|n| n == clip.nombre);
+        let hover = resp.hovered() || forzado;
+        let h = if forzado { 1.0 } else { animar::hacia(ui.ctx(), resp.id.with("h"), hover) };
+        // Al pasar el mouse la tarjeta sube un poco y gana sombra y borde azul (solo se dibuja más arriba: la
+        // zona de clic queda igual, así no tiembla).
+        let rect = rect.translate(vec2(0.0, -4.0 * h));
         let p = ui.painter().clone();
-        p.rect(rect, 10.0, PANEL, Stroke::new(1.0_f32, if hover { SEGMENTO_BORDE } else { BORDE }));
+        if h > 0.0 {
+            let sombra = egui::epaint::Shadow { offset: vec2(0.0, 8.0), blur: 22.0, spread: 0.0, color: Color32::from_black_alpha((120.0 * h) as u8) };
+            p.add(sombra.as_shape(rect, Rounding::same(12.0)));
+        }
+        p.rect(rect, 12.0, PANEL, Stroke::new(1.0_f32, mezclar(BORDE, ACENTO, h * 0.8)));
 
         // Miniatura (o un fondo con el ícono mientras se genera).
         let imagen = Rect::from_min_size(rect.min, vec2(ancho, alto_imagen)).shrink(1.0);
-        let redondeo = Rounding { nw: 9.0, ne: 9.0, sw: 0.0, se: 0.0 };
+        let redondeo = Rounding { nw: 11.0, ne: 11.0, sw: 0.0, se: 0.0 };
         let fallo = self.biblioteca.fallo_miniatura(&clip.ruta);
         match self.biblioteca.miniatura(&clip.ruta) {
             Some(tex) => {
@@ -152,12 +170,30 @@ impl App {
             }
             None => {
                 p.rect_filled(imagen, redondeo, FONDO);
-                let (icono, color) = if fallo { (icono::QUITAR, APAGADO) } else { (icono::CLIPS, APAGADO) };
-                p.text(imagen.center(), Align2::CENTER_CENTER, icono, FontId::new(26.0, iconos()), color);
+                if fallo {
+                    p.text(imagen.center(), Align2::CENTER_CENTER, icono::QUITAR, FontId::new(26.0, iconos()), APAGADO);
+                } else {
+                    // Mientras se genera: un brillo que cruza de izquierda a derecha.
+                    let t = (ui.input(|i| i.time) * 0.7).fract() as f32;
+                    let ancho_brillo = imagen.width() * 0.35;
+                    let x = imagen.left() - ancho_brillo + (imagen.width() + ancho_brillo) * t;
+                    for k in 0..6 {
+                        let franja = Rect::from_min_size(pos2(x + k as f32 * ancho_brillo / 6.0, imagen.top()), vec2(ancho_brillo / 6.0, imagen.height()))
+                            .intersect(imagen);
+                        let alfa = (1.0 - ((k as f32 - 2.5) / 3.0).abs()) * 7.0;
+                        if franja.width() > 0.0 {
+                            p.rect_filled(franja, 0.0, Color32::from_white_alpha(alfa as u8));
+                        }
+                    }
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+                }
             }
         }
-        if hover {
-            p.rect_filled(imagen, redondeo, Color32::from_white_alpha(10));
+        if h > 0.0 {
+            // Un velo y el botón de reproducir, que aparecen de a poco.
+            p.rect_filled(imagen, redondeo, Color32::from_black_alpha((60.0 * h) as u8));
+            p.circle_filled(imagen.center(), 22.0, ACENTO.gamma_multiply(0.9 * h));
+            p.text(imagen.center() + vec2(1.5, 0.0), Align2::CENTER_CENTER, icono::REPRODUCIR, FontId::new(16.0, iconos()), Color32::WHITE.gamma_multiply(h));
         }
         // Estrella de favorito, arriba a la izquierda: siempre si es favorito; si no, al pasar el mouse.
         let caja_estrella = Rect::from_min_size(imagen.min + vec2(8.0, 8.0), vec2(28.0, 28.0));
