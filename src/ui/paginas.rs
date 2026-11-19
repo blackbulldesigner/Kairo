@@ -103,6 +103,16 @@ impl App {
                     });
                 });
             }
+            ui.add_space(4.0);
+            separador(ui);
+            fila(
+                ui,
+                "Mostrar el mouse",
+                Some("El puntero aparece en tus clips. En los juegos casi nunca se ve: la mayoría dibuja el suyo."),
+                |ui| {
+                    interruptor(ui, &mut self.cfg.mostrar_mouse, true);
+                },
+            );
         });
 
         let nativa = eq.map(|e| e.resolucion_principal()).unwrap_or((1920, 1080));

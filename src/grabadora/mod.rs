@@ -11,6 +11,7 @@ mod codificador;
 mod encoder;
 pub mod h264;
 pub mod juego;
+mod mouse;
 mod mp4;
 pub mod reloj;
 pub mod sonido;
@@ -260,7 +261,7 @@ fn sesion_video(
     let ajustes = |c: &Config, cap: &captura::Captura| c.ajustes_encoder((cap.ancho_monitor, cap.alto_monitor));
 
     let mut cfg = cfg_pedida.clone();
-    let mut cap = captura::Captura::abrir(&monitor, &tarjeta, respaldo, tamano(&cfg), cfg.fps)?;
+    let mut cap = captura::Captura::abrir(&monitor, &tarjeta, respaldo, tamano(&cfg), cfg.fps, cfg.mostrar_mouse)?;
     let hardware = if forzado("KAIRO_PROCESADOR", "1") {
         Err(anyhow!("forzado con KAIRO_PROCESADOR"))
     } else {
@@ -272,7 +273,7 @@ fn sesion_video(
             log(&format!("sin encoder por hardware ({e:#}): se graba con el procesador"));
             cfg = limitar_para_procesador(cfg_pedida);
             drop(cap);
-            cap = captura::Captura::abrir(&monitor, &tarjeta, respaldo, tamano(&cfg), cfg.fps)?;
+            cap = captura::Captura::abrir(&monitor, &tarjeta, respaldo, tamano(&cfg), cfg.fps, cfg.mostrar_mouse)?;
             let e = codificador::EncoderProcesador::abrir(&cap.dispositivo, cap.ancho, cap.alto, &ajustes(&cfg, &cap))?;
             // Que el juego tenga prioridad sobre la compresión.
             unsafe {

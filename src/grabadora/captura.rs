@@ -138,7 +138,7 @@ struct Respaldo {
 }
 
 impl Respaldo {
-    fn abrir(dispositivo: &ID3D11Device, monitor: HMONITOR) -> Result<Self> {
+    fn abrir(dispositivo: &ID3D11Device, monitor: HMONITOR, mouse: bool) -> Result<Self> {
         if !GraphicsCaptureSession::IsSupported().unwrap_or(false) {
             return Err(anyhow!("esta versión de Windows no tiene Windows Graphics Capture"));
         }
@@ -149,8 +149,8 @@ impl Respaldo {
         let tamano = item.Size()?;
         let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&d3d, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, tamano)?;
         let sesion = pool.CreateCaptureSession(&item)?;
-        // Igual que Desktop Duplication: sin el mouse. Y sin el borde amarillo (solo se puede en Windows 11).
-        let _ = sesion.SetIsCursorCaptureEnabled(false);
+        // El mouse, solo si se pidió. Y sin el borde amarillo (solo se puede en Windows 11).
+        let _ = sesion.SetIsCursorCaptureEnabled(mouse);
         let _ = sesion.SetIsBorderRequired(false);
         sesion.StartCapture()?;
         Ok(Self { _item: item, pool, sesion, tamano })
@@ -191,13 +191,23 @@ pub struct Captura {
     negro: ID3D11VideoProcessorInputView,
     texturas: Vec<(ID3D11Texture2D, ID3D11VideoProcessorOutputView)>,
     siguiente: usize,
+    /// "Mostrar el mouse" con Desktop Duplication: el puntero y la copia del cuadro donde se dibuja.
+    mouse: Option<super::mouse::Mouse>,
+    con_mouse: Option<(ID3D11Texture2D, ID3D11RenderTargetView, ID3D11VideoProcessorInputView)>,
 }
 
 impl Captura {
     /// Prepara la captura del monitor `m` desde la tarjeta `tarjeta`, y la conversión a NV12 del
     /// tamaño que diga `tamano` (a partir del tamaño del monitor). Usa Desktop Duplication si se puede
     /// y, si no, la captura de respaldo.
-    pub fn abrir(m: &Monitor, tarjeta: &IDXGIAdapter1, forzar_respaldo: bool, tamano: impl Fn(u32, u32) -> (u32, u32), fps: u32) -> Result<Self> {
+    pub fn abrir(
+        m: &Monitor,
+        tarjeta: &IDXGIAdapter1,
+        forzar_respaldo: bool,
+        tamano: impl Fn(u32, u32) -> (u32, u32),
+        fps: u32,
+        mouse: bool,
+    ) -> Result<Self> {
         unsafe {
             let desc_tarjeta = tarjeta.GetDesc1()?;
             let nombre_tarjeta = texto_utf16(&desc_tarjeta.Description);
@@ -245,7 +255,7 @@ impl Captura {
                     (Origen::Duplicacion { salida: m.salida.clone(), dup: Some(d) }, "Desktop Duplication", md.Width, md.Height)
                 }
                 None => {
-                    let r = Respaldo::abrir(&dispositivo, m.hmonitor).map_err(|e| {
+                    let r = Respaldo::abrir(&dispositivo, m.hmonitor, mouse).map_err(|e| {
                         anyhow!(
                             "Windows no deja capturar este monitor desde esta tarjeta y la captura de respaldo no funcionó ({e:#}). \
                              Si es una laptop con dos tarjetas, abre Configuración → Sistema → Pantalla → Gráficos y pon Kairo en «Ahorro de energía»."
@@ -333,6 +343,35 @@ impl Captura {
             video_contexto.VideoProcessorSetStreamFrameFormat(&procesador, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
             video_contexto.VideoProcessorSetStreamAutoProcessingMode(&procesador, 0, false);
 
+            // El mouse (con Desktop Duplication; la captura de respaldo lo dibuja sola). Si algo falla, se graba sin él.
+            let (mouse, con_mouse) = if mouse && matches!(origen, Origen::Duplicacion { .. }) {
+                let preparar = || -> Result<_> {
+                    let m = super::mouse::Mouse::nuevo(&dispositivo)?;
+                    let t = textura(
+                        &dispositivo,
+                        ancho_monitor,
+                        alto_monitor,
+                        DXGI_FORMAT_B8G8R8A8_UNORM,
+                        D3D11_BIND_RENDER_TARGET.0 as u32 | D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                    )?;
+                    let mut rtv = None;
+                    dispositivo.CreateRenderTargetView(&t, None, Some(&mut rtv))?;
+                    let mut vista = None;
+                    video_dispositivo.CreateVideoProcessorInputView(&t, &enumerador, &vista_entrada, Some(&mut vista))?;
+                    let (rtv, vista) = (rtv.ok_or_else(|| anyhow!("sin vista"))?, vista.ok_or_else(|| anyhow!("sin vista"))?);
+                    Ok((m, (t, rtv, vista)))
+                };
+                match preparar() {
+                    Ok((m, c)) => (Some(m), Some(c)),
+                    Err(e) => {
+                        log(&format!("no se puede dibujar el mouse: {e:#}"));
+                        (None, None)
+                    }
+                }
+            } else {
+                (None, None)
+            };
+
             Ok(Self {
                 dispositivo,
                 luid: desc_tarjeta.AdapterLuid,
@@ -352,6 +391,8 @@ impl Captura {
                 negro,
                 texturas,
                 siguiente: 0,
+                mouse,
+                con_mouse,
             })
         }
     }
@@ -375,7 +416,11 @@ impl Captura {
                 let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
                 let mut recurso = None;
                 match d.AcquireNextFrame(0, &mut info, &mut recurso) {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        if let Some(m) = self.mouse.as_mut() {
+                            m.actualizar(&d, &info);
+                        }
+                    }
                     Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => return Ok(()),
                     Err(e) => {
                         *dup = None;
@@ -417,6 +462,17 @@ impl Captura {
 
     /// Convierte el último cuadro a NV12 (y al tamaño del clip) en una de las texturas que rotan.
     pub fn convertir(&mut self) -> Result<ID3D11Texture2D> {
+        // Con el mouse a la vista: el cuadro se copia y el puntero se dibuja encima de la copia.
+        if let (Some(m), Some((tex, rtv, vista))) = (&self.mouse, &self.con_mouse) {
+            if m.se_ve() {
+                unsafe {
+                    self.contexto.CopyResource(tex, &self.ultimo);
+                    m.dibujar(&self.contexto, rtv);
+                }
+                let vista = vista.clone();
+                return self.procesar(vista);
+            }
+        }
         let entrada = self.entrada.clone();
         self.procesar(entrada)
     }

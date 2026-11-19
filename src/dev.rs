@@ -33,6 +33,7 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
             solo_juego: extra("solo-juego"),
             programa: extra("programa"),
             avanzado: extra("avanzado"),
+            mouse: extra("mouse"),
         };
         return Some(informar(prueba_grabar(segundos, args.get(k + 2)?, opciones)));
     }
@@ -352,13 +353,15 @@ struct Opciones {
     solo_juego: bool,
     programa: bool,
     avanzado: bool,
+    mouse: bool,
 }
 
 fn prueba_grabar(segundos: u32, ruta: &str, o: Opciones) -> Result<()> {
-    let Opciones { tono, juego, solo_juego, programa, avanzado } = o;
+    let Opciones { tono, juego, solo_juego, programa, avanzado, mouse } = o;
     iniciar_mf()?;
     let mut cfg = Config::cargar();
     cfg.segundos = segundos;
+    cfg.mostrar_mouse = mouse;
     if juego {
         // Este proceso es "el juego": el tono sale de acá.
         std::env::set_var("KAIRO_JUEGO_PID", std::process::id().to_string());

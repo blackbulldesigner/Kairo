@@ -48,7 +48,8 @@ Ver `README.md` para el plan por fases.
   Release de GitHub, avisa (globo de la bandeja, menú, ventana) y actualiza con el KairoSetup verificado.
   Publicar es `scripts\publicar.ps1`: solo cuando la persona lo pida (es público).
 - `src/bandeja.rs`: grabadora en la bandeja (ícono, menú, atajos globales, mensajes `WM_APP+n` de los ajustes).
-- `src/grabadora/`: `captura.rs` (Desktop Duplication + NV12 en GPU), `encoder.rs` (H.264 por hardware,
+- `src/grabadora/`: `captura.rs` (Desktop Duplication + NV12 en GPU; `mouse.rs` dibuja el puntero encima con dos
+  shaders mínimos si se pide "Mostrar el mouse"), `encoder.rs` (H.264 por hardware,
   asíncrono), `audio.rs` (WASAPI loopback), `buffer.rs` (RAM), `mp4.rs` (sink writer), `mod.rs` (hilos).
   Video y audio usan el mismo reloj (QPC en 100 ns, `reloj.rs`).
 - `src/equipo.rs`: detección del equipo (Windows, RAM, batería, tarjetas, monitores, encoders).
@@ -71,6 +72,8 @@ Ver `README.md` para el plan por fases.
   pistas separadas: el tono tiene que quedar en la pista del juego y no en la del sistema. `solo-juego` sin
   juego adelante tiene que dar un clip negro. `--prueba-juego <s>` muestra la detección y los programas abiertos.
   `programa` suma `kairo.exe` como programa elegido: el tono tiene que quedar en su pista y en la mezcla.
+  `mouse` graba con "Mostrar el mouse" (con `--prueba-tira` a la altura del puntero se ve si quedó dibujado).
+  Ojo: `con.mp4` no sirve de nombre de prueba (CON es un nombre reservado de Windows).
   `avanzado` graba con opciones avanzadas raras (CBR, cuadro clave cada 2 s, perfil Básico, audio a 128 kbps):
   `--prueba-leer` muestra el perfil y el bitrate de cada pista para comprobarlo.
 - `--captura-ui <pagina> <png> [1700x950]` saca la página con ese tamaño de ventana; `grabacion-juego` la

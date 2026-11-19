@@ -395,6 +395,8 @@ pub struct Config {
     pub atajo_carpeta: Option<Atajo>,
     /// Buscar versiones nuevas en GitHub (una consulta chica por día).
     pub buscar_actualizaciones: bool,
+    /// Dibujar el puntero del mouse en los clips.
+    pub mostrar_mouse: bool,
 }
 
 impl Default for Config {
@@ -423,6 +425,7 @@ impl Default for Config {
             atajo_pausa: None,
             atajo_carpeta: None,
             buscar_actualizaciones: true,
+            mostrar_mouse: false,
         }
     }
 }

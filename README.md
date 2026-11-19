@@ -28,6 +28,7 @@ PCs de escritorio.
   achicas para compartir (también "Para Discord": menos de 10 MB). Siempre se guarda como clip nuevo.
 - **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto.
 - Clic derecho en el ícono: guardar, pausar, abrir la carpeta de clips, ajustes y salir.
+- En Grabación puedes elegir si el mouse aparece en tus clips (**Mostrar el mouse**, apagado de fábrica).
 - En Grabación → **Opciones avanzadas** puedes elegir el bitrate, si es variable o constante, cada cuánto va
   un cuadro clave, el perfil H.264, la velocidad del encoder y la calidad del audio.
 - En Sistema puedes activar **Iniciar con Windows**.
