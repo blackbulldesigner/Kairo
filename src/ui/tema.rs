@@ -51,6 +51,12 @@ pub mod icono {
     /// Tacho de basura.
     pub const QUITAR: &str = "\u{E74D}";
     pub const DESCARGAR: &str = "\u{E896}";
+    pub const REPRODUCIR: &str = "\u{E768}";
+    pub const PAUSA: &str = "\u{E769}";
+    pub const ATRAS: &str = "\u{E72B}";
+    /// Tijera (recortar / editar).
+    pub const TIJERA: &str = "\u{E8C6}";
+    pub const GUARDAR: &str = "\u{E74E}";
     /// Flechas en círculo (buscar de nuevo).
     pub const RECARGAR: &str = "\u{E72C}";
 }

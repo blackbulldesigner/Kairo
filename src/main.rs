@@ -22,6 +22,7 @@ mod estado;
 mod grabadora;
 mod icono;
 mod instalacion;
+mod medios;
 mod red;
 mod registro;
 mod ui;

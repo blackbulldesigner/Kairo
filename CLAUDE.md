@@ -56,6 +56,10 @@ Ver `README.md` para el plan por fases.
 - `src/ui/`: ventana de Kairo (`app.rs` arma la ventana, `paginas.rs` las páginas de ajustes,
   `biblioteca.rs` + `pagina_biblioteca.rs` la biblioteca de clips y sus miniaturas).
 - `src/datos_clip.rs`: datos de cada clip (`clip.mp4.kairo`, oculto): juego, nombres de las pistas, formato.
+- `src/medios/` (solo la ventana, nunca la grabadora): `reproductor.rs` (hilo de video que achica a 1280×720 y
+  hilo de audio con WASAPI que mezcla las pistas con su volumen y lleva el reloj), `exportar.rs` (recorte sin
+  recodificar el video, audio rearmado por pista) y `comprimir.rs` (recodificar con el sink writer). La interfaz
+  es `src/ui/visor.rs` (Ver, Editar, Comprimir), dentro de la Biblioteca.
 
 ## Probar
 
@@ -84,3 +88,6 @@ Ver `README.md` para el plan por fases.
 - `--prueba-actualizacion [api]` busca el release de Kairo y, con la API de otro repositorio (por ejemplo
   `https://api.github.com/repos/cli/cli/releases/latest`), baja su archivo más chico y comprueba el SHA-256.
   `KAIRO_CAPTURA_VERSION=0.9.0` hace que `--captura-ui` muestre el aviso de una versión nueva.
+- `--prueba-medios <clip>` reproduce, busca, recorta y comprime ese clip y revisa cada resultado (borrar después
+  el clip, el "(editado)" y el "(comprimido)"). `KAIRO_CAPTURA_CLIP=<mp4>` + `KAIRO_CAPTURA_MODO=ver|editar|comprimir`
+  con `--captura-ui biblioteca` saca el visor con ese clip.

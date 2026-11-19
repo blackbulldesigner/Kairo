@@ -59,10 +59,89 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     if pos("--prueba-desinstalar").is_some() {
         return Some(informar(prueba_desinstalar()));
     }
+    if let Some(k) = pos("--prueba-medios") {
+        return Some(informar(prueba_medios(args.get(k + 1)?)));
+    }
     if let Some(k) = pos("--prueba-actualizacion") {
         return Some(informar(prueba_actualizacion(args.get(k + 1).map(|s| s.as_str()))));
     }
     None
+}
+
+/// Reproduce, busca, recorta y comprime un clip, y revisa cada resultado. Los archivos nuevos quedan al lado
+/// del clip ("(editado)" y "(comprimido)"): borrarlos al terminar.
+fn prueba_medios(ruta: &str) -> Result<()> {
+    use crate::medios::{comprimir, exportar, reproductor::Reproductor};
+    use std::sync::atomic::AtomicBool;
+    let ruta = Path::new(ruta);
+    let info = crate::medios::info(ruta)?;
+    println!("info: {:.2} s, {}×{} a {:.0} fps, {} pistas de audio", info.duracion, info.ancho, info.alto, info.fps, info.pistas_audio);
+
+    // Reproducir 1,5 s: tienen que llegar cuadros y avanzar el reloj.
+    let r = Reproductor::abrir(ruta, vec![1.0], || {})?;
+    std::thread::sleep(Duration::from_millis(400));
+    let primero = r.tomar_cuadro().map(|c| (c.ancho, c.alto, c.t));
+    println!("primer cuadro (en pausa): {primero:?}");
+    r.reproducir();
+    let t = std::time::Instant::now();
+    let mut cuadros = 0;
+    while t.elapsed() < Duration::from_millis(1500) {
+        if r.tomar_cuadro().is_some() {
+            cuadros += 1;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    println!("reproduciendo 1,5 s: {cuadros} cuadros mostrados, reloj en {:.2} s, ¿sonando? {}", r.posicion(), r.reproduciendo());
+    let mitad = info.duracion / 2.0;
+    r.pausar();
+    r.buscar(mitad);
+    std::thread::sleep(Duration::from_millis(600));
+    let c = r.tomar_cuadro().map(|c| c.t);
+    println!("buscar {mitad:.2} s en pausa: reloj {:.2} s, cuadro a los {c:?}", r.posicion());
+    if primero.is_none() || cuadros < 20 || c.is_none_or(|t| (t - mitad).abs() > 0.1) {
+        return Err(anyhow!("el reproductor no anduvo bien"));
+    }
+    drop(r);
+
+    // Recortar del segundo 1 al 3, con la última pista a la mitad.
+    let mut volumenes = vec![1.0; info.pistas_audio];
+    if let Some(v) = volumenes.last_mut() {
+        *v = 0.5;
+    }
+    let nombres = crate::datos_clip::leer(ruta).map(|d| d.pistas).unwrap_or_default();
+    let destino = crate::medios::ruta_libre(ruta, "editado");
+    let pedido = exportar::Pedido { origen: ruta.to_path_buf(), destino: destino.clone(), inicio: 1.0, fin: 3.0, volumenes, nombres };
+    let t = std::time::Instant::now();
+    let res = exportar::exportar(&pedido, &|_| {}, &AtomicBool::new(false))?;
+    let i2 = crate::medios::info(&destino)?;
+    println!(
+        "recorte en {} ms: empieza a los {:.2} s del original, dura {:.2} s ({:.2} s según el archivo), {} pistas",
+        t.elapsed().as_millis(),
+        res.inicio_real,
+        res.duracion,
+        i2.duracion,
+        i2.pistas_audio
+    );
+    prueba_leer(destino.to_str().unwrap_or_default(), None)?;
+
+    // Comprimir "Liviano".
+    let (alto, bitrate) = comprimir::plan(comprimir::Opcion::Liviano, &info)?;
+    let destino = crate::medios::ruta_libre(ruta, "comprimido");
+    let t = std::time::Instant::now();
+    comprimir::comprimir(&comprimir::Pedido { origen: ruta.to_path_buf(), destino: destino.clone(), alto, bitrate }, &|_| {}, &AtomicBool::new(false))?;
+    let i3 = crate::medios::info(&destino)?;
+    println!(
+        "comprimido en {} ms: {}×{}, {:.2} s, {} KB (original {} KB, estimado {} KB)",
+        t.elapsed().as_millis(),
+        i3.ancho,
+        i3.alto,
+        i3.duracion,
+        std::fs::metadata(&destino)?.len() / 1024,
+        std::fs::metadata(ruta)?.len() / 1024,
+        comprimir::tamano_estimado(&info, bitrate) / 1024
+    );
+    prueba_leer(destino.to_str().unwrap_or_default(), None)?;
+    Ok(())
 }
 
 /// Busca el último release de Kairo y, con `[api]` (la API de otro repositorio con releases), prueba bajar su

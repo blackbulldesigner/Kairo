@@ -41,6 +41,21 @@ pub fn desde_args(args: &[String]) -> Option<Pedido> {
     Some(Pedido { pagina, tamano, modo_juego, programas, avanzado, ruta, cuadros: 0, pedida: false })
 }
 
+/// Con `--captura-ui biblioteca`, `KAIRO_CAPTURA_CLIP=<mp4>` abre ese clip en el visor y `KAIRO_CAPTURA_MODO`
+/// ("ver", "editar" o "comprimir") elige la pestaña.
+pub fn clip_pedido() -> Option<(PathBuf, super::visor::Modo)> {
+    if !cfg!(feature = "dev") {
+        return None;
+    }
+    let clip = PathBuf::from(std::env::var_os("KAIRO_CAPTURA_CLIP")?);
+    let modo = match std::env::var("KAIRO_CAPTURA_MODO").unwrap_or_default().as_str() {
+        "editar" => super::visor::Modo::Editar,
+        "comprimir" => super::visor::Modo::Comprimir,
+        _ => super::visor::Modo::Ver,
+    };
+    Some((clip, modo))
+}
+
 /// `--captura-instalador <archivo.png>`: la ventana del instalador (no instala nada).
 pub fn del_instalador(args: &[String]) -> Option<Pedido> {
     if !cfg!(feature = "dev") {

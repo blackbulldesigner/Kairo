@@ -94,6 +94,8 @@ pub struct App {
     /// Último clip que avisó la grabadora (si cambia, la biblioteca se vuelve a leer enseguida).
     ultimo_clip_visto: Option<String>,
     pub(super) actualizador: super::actualizar::Actualizador,
+    /// El clip abierto en la Biblioteca (reproductor, editor y compresor).
+    pub(super) visor: Option<super::visor::Visor>,
 }
 
 impl App {
@@ -134,6 +136,10 @@ impl App {
         let pagina = captura.as_ref().map(|c| c.pagina).or(pedida).unwrap_or(Pagina::Biblioteca);
         // En las capturas de prueba no se va a internet.
         let actualizador = super::actualizar::Actualizador::new(&cc.egui_ctx, cfg.buscar_actualizaciones && captura.is_none());
+        let visor = captura
+            .as_ref()
+            .and_then(|_| super::captura::clip_pedido())
+            .map(|(clip, modo)| super::visor::Visor::abrir(&cc.egui_ctx, &clip, modo));
         Self {
             pagina,
             guardada: cfg.clone(),
@@ -153,6 +159,7 @@ impl App {
             biblioteca: super::biblioteca::Biblioteca::new(&cc.egui_ctx),
             ultimo_clip_visto: None,
             actualizador,
+            visor,
         }
     }
 
@@ -388,6 +395,12 @@ impl eframe::App for App {
             self.ultimo_clip_visto = nuevo_clip;
             self.biblioteca.escanear_ya();
         }
+        // Fuera de la Biblioteca, el clip abierto se pausa.
+        if self.pagina != Pagina::Biblioteca {
+            if let Some(v) = &self.visor {
+                v.pausar();
+            }
+        }
         if self.pagina == Pagina::Biblioteca {
             let carpeta = self.guardada.carpeta.clone();
             self.biblioteca.actualizar(&carpeta, self.ahora, ctx);
@@ -416,7 +429,11 @@ impl eframe::App for App {
                     // Columna de hasta 960 puntos, centrada si sobra lugar (ventana grande).
                     let ancho = ui.available_width();
                     // La biblioteca aprovecha más ancho (más columnas de clips).
-                    let maximo = if self.pagina == Pagina::Biblioteca { 1500.0 } else { 960.0 };
+                    let maximo = match self.pagina {
+                        Pagina::Biblioteca if self.visor.is_some() => 1200.0,
+                        Pagina::Biblioteca => 1500.0,
+                        _ => 960.0,
+                    };
                     let contenido = ancho.min(maximo);
                     let margen = ((ancho - contenido) / 2.0).floor().max(0.0);
                     ui.horizontal_top(|ui| {
@@ -424,6 +441,7 @@ impl eframe::App for App {
                         ui.vertical(|ui| {
                             ui.set_width(contenido);
                             match self.pagina {
+                                Pagina::Biblioteca if self.visor.is_some() => self.pagina_visor(ui),
                                 Pagina::Biblioteca => self.pagina_biblioteca(ui),
                                 Pagina::Grabacion => self.pagina_grabacion(ui, equipo.as_ref()),
                                 Pagina::Audio => self.pagina_audio(ui, equipo.as_ref()),
@@ -440,7 +458,11 @@ impl eframe::App for App {
         );
 
         if let Some(c) = &mut self.captura {
-            let listo = equipo.is_some() && (self.pagina != Pagina::Biblioteca || self.biblioteca.pendientes() == 0);
+            let listo = equipo.is_some()
+                && match &self.visor {
+                    Some(v) if self.pagina == Pagina::Biblioteca => v.listo(),
+                    _ => self.pagina != Pagina::Biblioteca || self.biblioteca.pendientes() == 0,
+                };
             c.paso(ctx, listo);
         }
     }

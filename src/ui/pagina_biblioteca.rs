@@ -5,6 +5,7 @@ use eframe::egui::{self, pos2, text::LayoutJob, vec2, Align2, Color32, CursorIco
 use super::app::App;
 use super::biblioteca::{hace_cuanto, texto_duracion, Clip, Orden};
 use super::tema::*;
+use super::visor::Modo;
 use super::widgets::*;
 use crate::config::{texto_bytes, CualAtajo};
 
@@ -25,7 +26,7 @@ fn abrir(ruta: &std::path::Path) {
     let _ = std::process::Command::new("explorer").arg(ruta).spawn();
 }
 
-fn mostrar_en_carpeta(ruta: &std::path::Path) {
+pub(super) fn mostrar_en_carpeta(ruta: &std::path::Path) {
     let mut arg = std::ffi::OsString::from("/select,");
     arg.push(ruta.as_os_str());
     let _ = std::process::Command::new("explorer").arg(arg).spawn();
@@ -181,15 +182,28 @@ impl App {
         let meta = una_linea(ui, &datos.join(" · "), FontId::proportional(12.0), SECUNDARIO, ancho_texto);
         p.galley(pos2(x, imagen.bottom() + 32.0), meta, SECUNDARIO);
 
-        let resp = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("Clic para abrir · clic derecho para más opciones");
+        let resp = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("Clic para verlo · clic derecho para más opciones");
         if resp.clicked() {
-            abrir(&clip.ruta);
+            self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Ver);
         }
         resp.context_menu(|ui| {
-            if ui.button("Abrir").clicked() {
+            if ui.button("Ver").clicked() {
+                self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Ver);
+                ui.close_menu();
+            }
+            if ui.button("Editar (recortar y pistas)").clicked() {
+                self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Editar);
+                ui.close_menu();
+            }
+            if ui.button("Comprimir…").clicked() {
+                self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Comprimir);
+                ui.close_menu();
+            }
+            if ui.button("Abrir con el reproductor de Windows").clicked() {
                 abrir(&clip.ruta);
                 ui.close_menu();
             }
+            ui.separator();
             if ui.button("Mostrar en la carpeta").clicked() {
                 mostrar_en_carpeta(&clip.ruta);
                 ui.close_menu();

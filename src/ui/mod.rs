@@ -10,6 +10,7 @@ mod pagina_biblioteca;
 mod paginas;
 pub mod tema;
 mod ventana;
+mod visor;
 mod widgets;
 
 use eframe::egui;

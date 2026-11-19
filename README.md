@@ -8,8 +8,8 @@ PCs de escritorio.
 > últimos segundos con F9, con el sonido del sistema. Funciona también en laptops con dos tarjetas
 > (captura de respaldo), en tarjetas sin encoder (por procesador) y baja la calidad con batería.
 > Detecta el juego, puede grabar solo el juego y separa el audio del juego, del resto del sistema y
-> del micrófono, y graba aparte los programas que elijas (Discord, música…). Tiene biblioteca de clips.
-> Próximo: editor y recorte de clips.
+> del micrófono, y graba aparte los programas que elijas (Discord, música…). Tiene biblioteca de clips con
+> reproductor propio, editor (recortar y el volumen de cada pista) y compresor para compartir.
 
 ## Cómo se usa
 
@@ -23,6 +23,9 @@ PCs de escritorio.
 - Para desinstalar: Configuración → Aplicaciones → Kairo. Pregunta si borrar también tus ajustes; los clips
   nunca se borran.
 - Abre Kairo: aparece el ícono de Kairo junto al reloj y se abre la ventana de Kairo en la Biblioteca.
+- En la Biblioteca, un clic abre el clip en el reproductor de Kairo (Espacio pausa, ← → saltan 5 s). En
+  **Editar** lo recortas y cambias el volumen de cada pista (por ejemplo, sin Discord) y en **Comprimir** lo
+  achicas para compartir (también "Para Discord": menos de 10 MB). Siempre se guarda como clip nuevo.
 - **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto.
 - Clic derecho en el ícono: guardar, pausar, abrir la carpeta de clips, ajustes y salir.
 - En Grabación → **Opciones avanzadas** puedes elegir el bitrate, si es variable o constante, cada cuánto va
@@ -84,8 +87,9 @@ el desinstalador.
   búsqueda y orden; abrir, mostrar en la carpeta, renombrar y mandar a la Papelera. Las miniaturas se generan en
   segundo plano y quedan en caché (`%APPDATA%\Kairo\miniaturas`). Vive en la ventana de Kairo: no pesa nada
   mientras juegas.
-- [ ] **Fase 5: editor.** Reproductor dentro de Kairo, recorte y exportar sin recodificar, y quitar pistas
-  (por ejemplo, Discord) usando los datos de cada clip.
+- [x] **Fase 5: editor.** Reproductor dentro de Kairo (con WASAPI y el volumen de cada pista en vivo), recorte
+  sin recodificar el video (desde el cuadro clave anterior), volumen o silencio por pista usando los datos de
+  cada clip, y compresor (1080p, 720p o menos de 10 MB) con el encoder de la tarjeta y prioridad baja.
 - [ ] **Fase 6: extras.** ~~Instalador~~ (listo: `KairoSetup.exe`, sin permisos de administrador, con
   desinstalador en "Aplicaciones instaladas"), ~~actualizaciones~~ (listo: aviso y actualización con
   SHA-256) y firma digital.
@@ -135,7 +139,8 @@ cargo run --features dev -- --prueba-leer prueba.mp4 cuadro.png
 ```
 
 La primera graba 6 segundos (con un tono a la mitad) y guarda el clip; la segunda lo abre como un reproductor,
-cuenta cuadros, mide el audio y guarda la imagen del cuadro del medio.
+cuenta cuadros, mide el audio y guarda la imagen del cuadro del medio. `--prueba-medios clip.mp4` prueba el
+reproductor, el recorte y el compresor con ese clip (deja al lado el clip "(editado)" y el "(comprimido)").
 
 El instalador se prueba en una carpeta aparte, sin tocar la PC (otra clave del registro, sin cerrar el Kairo
 abierto ni tocar el inicio con Windows):

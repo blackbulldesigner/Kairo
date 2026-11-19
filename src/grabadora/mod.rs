@@ -9,7 +9,7 @@ mod buffer;
 mod captura;
 mod codificador;
 mod encoder;
-mod h264;
+pub mod h264;
 pub mod juego;
 mod mp4;
 pub mod reloj;
