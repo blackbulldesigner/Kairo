@@ -179,9 +179,7 @@ unsafe fn identificar(pid: u32, ventana: HWND, monitor: isize, forzado: bool) ->
         let n = GetWindowTextW(ventana, &mut buf).max(0) as usize;
         texto(&buf[..n])
     };
-    let nombre = descripcion_del_exe(&ruta)
-        .or_else(|| Some(titulo).filter(|t| !t.is_empty()))
-        .unwrap_or_else(|| std::path::Path::new(&ruta).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+    let nombre = nombre_del_juego(&exe, descripcion_del_exe(&ruta).as_deref(), &titulo);
     log(&format!("juego detectado: {nombre} ({exe}.exe, pid {pid})"));
     Some(Juego { pid, nombre, monitor, proceso })
 }
@@ -375,15 +373,139 @@ pub fn programas_abiertos() -> Vec<Programa> {
         if DE_WINDOWS.contains(&base.as_str()) || !vistos.insert(exe.clone()) {
             continue;
         }
-        let nombre = unsafe { descripcion_del_exe(&ruta) }.unwrap_or_else(|| {
+        let titulo = {
             let mut buf = [0u16; 256];
             let n = unsafe { GetWindowTextW(ventana, &mut buf) }.max(0) as usize;
             texto(&buf[..n])
-        });
+        };
+        let nombre = nombre_del_juego(&base, unsafe { descripcion_del_exe(&ruta) }.as_deref(), &titulo);
         lista.push(Programa { exe, nombre });
     }
     lista.sort_by_key(|p| p.nombre.to_lowercase());
     lista
+}
+
+/// Juegos conocidos por su exe (sin ".exe", en minúsculas): el exe de muchos no dice cómo se llaman
+/// ("FortniteClient-Win64-Shipping").
+const CONOCIDOS: &[(&str, &str)] = &[
+    ("fortniteclient-win64-shipping", "Fortnite"),
+    ("fortniteclient-win64-shipping_eac_eos", "Fortnite"),
+    ("fortniteclient-win64-shipping_be", "Fortnite"),
+    ("fortniteclient-win64-shipping_eac", "Fortnite"),
+    ("valorant-win64-shipping", "Valorant"),
+    ("valorant", "Valorant"),
+    ("cs2", "Counter-Strike 2"),
+    ("csgo", "Counter-Strike"),
+    ("r5apex", "Apex Legends"),
+    ("r5apex_dx12", "Apex Legends"),
+    ("league of legends", "League of Legends"),
+    ("overwatch", "Overwatch 2"),
+    ("rocketleague", "Rocket League"),
+    ("gta5", "GTA V"),
+    ("gta5_enhanced", "GTA V"),
+    ("playgtav", "GTA V"),
+    ("rdr2", "Red Dead Redemption 2"),
+    ("eldenring", "Elden Ring"),
+    ("minecraft.windows", "Minecraft"),
+    ("robloxplayerbeta", "Roblox"),
+    ("dota2", "Dota 2"),
+    ("destiny2", "Destiny 2"),
+    ("tslgame", "PUBG"),
+    ("cod", "Call of Duty"),
+    ("modernwarfare", "Call of Duty"),
+    ("blackops6", "Call of Duty"),
+    ("rainbowsix", "Rainbow Six Siege"),
+    ("rainbowsix_vulkan", "Rainbow Six Siege"),
+    ("rainbowsix_be", "Rainbow Six Siege"),
+    ("marvel-win64-shipping", "Marvel Rivals"),
+    ("discovery", "THE FINALS"),
+    ("deadlock", "Deadlock"),
+    ("project8", "Deadlock"),
+    ("genshinimpact", "Genshin Impact"),
+    ("zenlesszonezero", "Zenless Zone Zero"),
+    ("starrail", "Honkai Star Rail"),
+    ("forzahorizon5", "Forza Horizon 5"),
+    ("cyberpunk2077", "Cyberpunk 2077"),
+    ("haloinfinite", "Halo Infinite"),
+    ("palworld-win64-shipping", "Palworld"),
+    ("helldivers2", "Helldivers 2"),
+    ("fallguys_client_game", "Fall Guys"),
+    ("left4dead2", "Left 4 Dead 2"),
+    ("tf_win64", "Team Fortress 2"),
+    ("deadbydaylight-win64-shipping", "Dead by Daylight"),
+    ("rustclient", "Rust"),
+    ("escapefromtarkov", "Escape from Tarkov"),
+    ("aces", "War Thunder"),
+    ("wow", "World of Warcraft"),
+    ("hearthstone", "Hearthstone"),
+    ("diablo iv", "Diablo IV"),
+    ("pathofexile", "Path of Exile"),
+    ("pathofexile_x64", "Path of Exile"),
+    ("pathofexile_x64steam", "Path of Exile"),
+    ("bf2042", "Battlefield 2042"),
+    ("arma3_x64", "Arma 3"),
+    ("sotgame", "Sea of Thieves"),
+    ("brawlhalla", "Brawlhalla"),
+    ("vrchat", "VRChat"),
+    ("osu!", "osu!"),
+    ("lethal company", "Lethal Company"),
+    ("phasmophobia", "Phasmophobia"),
+    ("among us", "Among Us"),
+    ("terraria", "Terraria"),
+    ("stardew valley", "Stardew Valley"),
+    ("geometrydash", "Geometry Dash"),
+    ("hollow knight", "Hollow Knight"),
+    ("bg3", "Baldur's Gate 3"),
+    ("bg3_dx11", "Baldur's Gate 3"),
+    ("witcher3", "The Witcher 3"),
+];
+
+/// Descripciones de exe que no dicen qué juego es (las del motor o de Java).
+const DESCRIPCIONES_GENERICAS: &[&str] =
+    &["unrealgame", "unreal engine", "ue4game", "ue5game", "unity", "java(tm) platform se binary", "openjdk platform binary", "game", "launcher"];
+
+/// Sufijos técnicos que se quitan del nombre ("FortniteClient-Win64-Shipping" → "Fortnite").
+const SUFIJOS: &[&str] = &[
+    "-win64-shipping", "-win32-shipping", "-wingdk-shipping", "-shipping", "_shipping", "_eac_eos", "_eac", "_be", "_dx12", "_dx11",
+    "_vulkan", "_x64", "-x64", " x64", " (64-bit)", " 64-bit", "client",
+];
+
+fn sin_sufijos(s: &str) -> String {
+    let mut t = s.trim().to_string();
+    loop {
+        let largo = t.len();
+        let sobra = SUFIJOS
+            .iter()
+            .chain(std::iter::once(&".exe"))
+            .find(|suf| largo > suf.len() + 1 && t.is_char_boundary(largo - suf.len()) && t[largo - suf.len()..].eq_ignore_ascii_case(suf));
+        let Some(suf) = sobra else { break };
+        t.truncate(largo - suf.len());
+        t = t.trim_end_matches([' ', '-', '_', '.']).to_string();
+    }
+    t.replace('_', " ").trim().to_string()
+}
+
+/// El nombre con el que se muestra el juego y se arma su carpeta: el conocido, o la descripción del exe, o el
+/// título de la ventana, o el nombre del exe; siempre sin los sufijos técnicos ("-Win64-Shipping", "_dx12"…).
+pub fn nombre_del_juego(exe: &str, descripcion: Option<&str>, titulo: &str) -> String {
+    let exe = exe.trim_end_matches(".exe").to_lowercase();
+    if exe == "javaw" && titulo.to_lowercase().contains("minecraft") {
+        return "Minecraft".into();
+    }
+    if let Some((_, n)) = CONOCIDOS.iter().find(|(e, _)| *e == exe) {
+        return n.to_string();
+    }
+    let descripcion = descripcion.map(str::trim).filter(|d| !d.is_empty() && !DESCRIPCIONES_GENERICAS.contains(&d.to_lowercase().as_str()));
+    let base = descripcion
+        .map(String::from)
+        .or_else(|| Some(titulo.trim().to_string()).filter(|t| !t.is_empty()))
+        .unwrap_or_else(|| exe.clone());
+    let limpio = sin_sufijos(&base);
+    if limpio.is_empty() {
+        base
+    } else {
+        limpio
+    }
 }
 
 /// Un nombre que sirve como carpeta en Windows ("VALORANT", "Rocket League").
@@ -395,5 +517,27 @@ pub fn nombre_para_carpeta(nombre: &str) -> String {
         "Juego".into()
     } else {
         limpio
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::nombre_del_juego;
+
+    #[test]
+    fn nombres_limpios() {
+        // Conocidos por el exe.
+        assert_eq!(nombre_del_juego("FortniteClient-Win64-Shipping", Some("FortniteClient-Win64-Shipping"), "Fortnite"), "Fortnite");
+        assert_eq!(nombre_del_juego("valorant-win64-shipping.exe", Some("VALORANT"), ""), "Valorant");
+        assert_eq!(nombre_del_juego("cs2", Some("Counter-Strike 2"), ""), "Counter-Strike 2");
+        assert_eq!(nombre_del_juego("javaw", Some("Java(TM) Platform SE binary"), "Minecraft 1.21.4"), "Minecraft");
+        // Desconocidos: sin los sufijos técnicos.
+        assert_eq!(nombre_del_juego("mygame-win64-shipping", Some("MyGame-Win64-Shipping"), ""), "MyGame");
+        assert_eq!(nombre_del_juego("cool_game_dx12", None, ""), "cool game");
+        assert_eq!(nombre_del_juego("x", Some("Unity"), "Hollow Realm"), "Hollow Realm");
+        assert_eq!(nombre_del_juego("x", Some("Rocket League"), ""), "Rocket League");
+        // Lo que no tiene sufijos queda igual (y "Client" solo no se borra).
+        assert_eq!(nombre_del_juego("client", Some("Client"), ""), "Client");
+        assert_eq!(nombre_del_juego("discord", Some("Discord"), ""), "Discord");
     }
 }

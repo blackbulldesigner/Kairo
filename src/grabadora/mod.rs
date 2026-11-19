@@ -96,14 +96,16 @@ impl Grabadora {
 }
 
 impl Guardador {
-    /// Escribe los últimos segundos en la carpeta de clips (en la del juego, si hay uno y está activado).
-    /// El nombre lleva el juego y la fecha: "VALORANT 2026-11-18 21-30-05.mp4". Devuelve la ruta del MP4.
+    /// Escribe los últimos segundos en la carpeta de clips. Con "Una carpeta por juego", cada juego va en
+    /// la suya (Clips\Fortnite) y lo que no es de un juego en Clips\Escritorio. El nombre lleva el juego y
+    /// la fecha: "Fortnite 2026-11-18 21-30-05.mp4". Devuelve la ruta del MP4.
     pub fn guardar(&self, cfg: &Config) -> Result<PathBuf> {
         let juego = self.info.lock().ok().and_then(|i| i.juego.clone()).map(|j| nombre_para_carpeta(&j));
         let fecha = crate::registro::fecha_para_archivo();
         let (carpeta, nombre) = match &juego {
             Some(j) if cfg.carpeta_por_juego => (cfg.carpeta.join(j), format!("{j} {fecha}.mp4")),
             Some(j) => (cfg.carpeta.clone(), format!("{j} {fecha}.mp4")),
+            None if cfg.carpeta_por_juego => (cfg.carpeta.join(CARPETA_SIN_JUEGO), format!("{CARPETA_SIN_JUEGO} {fecha}.mp4")),
             None => (cfg.carpeta.clone(), format!("Kairo {fecha}.mp4")),
         };
         self.guardar_en(cfg, &carpeta.join(nombre), cfg.segundos)
@@ -224,6 +226,8 @@ fn limitar_para_procesador(cfg: &Config) -> Config {
 
 /// Cuántos cuadros pueden esperar a que el encoder los pida (si se llena, se descarta el más viejo).
 const COLA_MAXIMA: usize = 4;
+/// Con "Una carpeta por juego", la carpeta de los clips sin juego.
+const CARPETA_SIN_JUEGO: &str = "Escritorio";
 /// Cada cuánto se mira qué hay adelante (250 ms).
 const CADA_CUANTO_DETECTAR: i64 = SEGUNDO / 4;
 

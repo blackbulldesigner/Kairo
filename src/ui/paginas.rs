@@ -356,7 +356,10 @@ impl App {
             fila(
                 ui,
                 "Una carpeta por juego",
-                Some("Los clips de cada juego van en su carpeta (por ejemplo, Clips\\VALORANT) y llevan su nombre."),
+                Some(
+                    "Los clips de cada juego van en su carpeta y llevan su nombre (por ejemplo, Kairo\\Fortnite); los que \
+                     no son de un juego, en Kairo\\Escritorio.",
+                ),
                 |ui| {
                     interruptor(ui, &mut self.cfg.carpeta_por_juego, true);
                 },
