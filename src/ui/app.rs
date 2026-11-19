@@ -96,6 +96,8 @@ pub struct App {
     pub(super) actualizador: super::actualizar::Actualizador,
     /// El clip abierto en la Biblioteca (reproductor, editor y compresor).
     pub(super) visor: Option<super::visor::Visor>,
+    /// Guardado → Limpieza: (carpeta y límites con que se calculó, hasta cuándo vale, resumen).
+    pub(super) limpieza_resumen: Option<((std::path::PathBuf, crate::config::Limpieza), f64, super::paginas::ResumenLimpieza)>,
 }
 
 impl App {
@@ -124,6 +126,9 @@ impl App {
         }
         if captura.as_ref().is_some_and(|c| c.avanzado) {
             cfg.avanzado.activo = true;
+        }
+        if captura.as_ref().is_some_and(|c| c.limpieza) {
+            cfg.limpieza.activa = true;
         }
         if captura.as_ref().is_some_and(|c| c.programas) {
             cfg.otros_sonidos = crate::config::OtrosSonidos::Elegidos;
@@ -160,6 +165,7 @@ impl App {
             ultimo_clip_visto: None,
             actualizador,
             visor,
+            limpieza_resumen: None,
         }
     }
 

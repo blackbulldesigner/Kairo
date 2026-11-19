@@ -53,3 +53,30 @@ pub fn pagina(url: &str) {
         ejecutar(&HSTRING::from(url));
     }
 }
+
+/// Manda los archivos a la Papelera de reciclaje (sin preguntar; los que no existen se saltean).
+pub fn papelera(rutas: &[std::path::PathBuf]) -> Result<(), String> {
+    use windows::Win32::UI::Shell::{SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE, SHFILEOPSTRUCTW};
+    // Lista de rutas separadas por \0 y terminada en \0\0 (solo las que existen).
+    let mut desde: Vec<u16> = Vec::new();
+    for r in rutas.iter().filter(|r| r.exists()) {
+        desde.extend(r.as_os_str().to_string_lossy().encode_utf16());
+        desde.push(0);
+    }
+    if desde.is_empty() {
+        return Ok(());
+    }
+    desde.push(0);
+    let mut op = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE,
+        pFrom: windows::core::PCWSTR(desde.as_ptr()),
+        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI).0 as u16,
+        ..Default::default()
+    };
+    let r = unsafe { SHFileOperationW(&mut op) };
+    if r == 0 && !op.fAnyOperationsAborted.as_bool() {
+        Ok(())
+    } else {
+        Err(format!("No se pudo mandar a la Papelera (código {r})."))
+    }
+}

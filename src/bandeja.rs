@@ -124,6 +124,7 @@ fn cambia_la_grabacion(a: &Config, b: &Config) -> bool {
     x.atajo_pausa = b.atajo_pausa.clone();
     x.atajo_carpeta = b.atajo_carpeta.clone();
     x.buscar_actualizaciones = b.buscar_actualizaciones;
+    x.limpieza = b.limpieza.clone();
     x.audio_juego.volumen = b.audio_juego.volumen;
     x.audio_sistema.volumen = b.audio_sistema.volumen;
     x.audio_mic.volumen = b.audio_mic.volumen;
@@ -312,12 +313,24 @@ impl Bandeja {
                     sonido::error();
                 }
             }
+            let guardado = r.is_ok();
             if let Ok(mut x) = resultado.lock() {
                 *x = Some(r.map(|p| p.display().to_string()).map_err(|e| e.to_string()));
             }
             guardando.store(false, Ordering::SeqCst);
             unsafe {
                 let _ = PostMessageW(HWND(hwnd as *mut _), WM_CLIP_LISTO, WPARAM(0), LPARAM(0));
+            }
+            // Limpieza automática, ya con el clip guardado: con prioridad baja (procesador y disco), para que el
+            // juego vaya primero. Es mirar la carpeta y, si toca, mandar unos archivos a la Papelera.
+            if guardado && cfg.limpieza.activa {
+                unsafe {
+                    use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN};
+                    let _ = SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+                }
+                if let Err(e) = crate::limpieza::limpiar(&cfg.carpeta, &cfg.limpieza) {
+                    log(&format!("limpieza: {e}"));
+                }
             }
         });
     }

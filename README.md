@@ -30,6 +30,9 @@ PCs de escritorio.
 - Con un segundo atajo ("Guardar clip largo", en Atajos) guardas un clip más largo (por ejemplo, 2 min) por si la
   jugada empezó antes. La RAM la marca el más largo de los dos; sin ese atajo no usa RAM de más.
 - Clic derecho en el ícono: guardar, pausar, abrir la carpeta de clips, ajustes y salir.
+- En la Biblioteca, la estrella marca un clip como favorito. En Guardado → **Limpieza automática** Kairo borra
+  solo los clips viejos (más de N días, o los más viejos si todos juntos pasan de X GB), a la Papelera o del todo.
+  Nunca borra favoritos ni videos que no hizo Kairo.
 - En Grabación puedes elegir si el mouse aparece en tus clips (**Mostrar el mouse**, apagado de fábrica).
 - En Grabación → **Opciones avanzadas** puedes elegir el bitrate, si es variable o constante, cada cuánto va
   un cuadro clave, el perfil H.264, la velocidad del encoder y la calidad del audio.

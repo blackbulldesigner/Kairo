@@ -25,6 +25,8 @@ pub struct DatosClip {
     /// La mezcla ya está marcada como la pista que tocan los reproductores (ver `pistas_mp4`). Los clips de
     /// antes de la 0.7.2 no la tienen: la biblioteca los repara.
     pub mezcla_marcada: bool,
+    /// Marcado con la estrella en la biblioteca: la limpieza automática nunca lo borra.
+    pub favorito: bool,
 }
 
 pub fn ruta_datos(clip: &Path) -> PathBuf {

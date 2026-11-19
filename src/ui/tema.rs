@@ -57,6 +57,8 @@ pub mod icono {
     /// Tijera (recortar / editar).
     pub const TIJERA: &str = "\u{E8C6}";
     pub const GUARDAR: &str = "\u{E74E}";
+    pub const ESTRELLA: &str = "\u{E734}";
+    pub const ESTRELLA_LLENA: &str = "\u{E735}";
     /// Flechas en círculo (buscar de nuevo).
     pub const RECARGAR: &str = "\u{E72C}";
 }

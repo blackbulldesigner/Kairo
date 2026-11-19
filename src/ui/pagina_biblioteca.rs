@@ -72,13 +72,21 @@ impl App {
         });
         ui.add_space(10.0);
 
-        // Juegos (como chips).
+        // Favoritos y juegos (como chips).
         let juegos = self.biblioteca.juegos();
-        if !juegos.is_empty() {
+        let favoritos = self.biblioteca.favoritos();
+        if !juegos.is_empty() || favoritos > 0 {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                if chip(ui, &format!("Todos  {total}"), self.biblioteca.filtro_juego.is_none()).clicked() {
+                let todos = self.biblioteca.filtro_juego.is_none() && !self.biblioteca.solo_favoritos;
+                if chip(ui, &format!("Todos  {total}"), todos).clicked() {
                     self.biblioteca.filtro_juego = None;
+                    self.biblioteca.solo_favoritos = false;
+                }
+                if favoritos > 0 || self.biblioteca.solo_favoritos {
+                    if chip(ui, &format!("Favoritos  {favoritos}"), self.biblioteca.solo_favoritos).clicked() {
+                        self.biblioteca.solo_favoritos = !self.biblioteca.solo_favoritos;
+                    }
                 }
                 for (j, n) in &juegos {
                     let sel = self.biblioteca.filtro_juego.as_deref() == Some(j.as_str());
@@ -151,6 +159,18 @@ impl App {
         if hover {
             p.rect_filled(imagen, redondeo, Color32::from_white_alpha(10));
         }
+        // Estrella de favorito, arriba a la izquierda: siempre si es favorito; si no, al pasar el mouse.
+        let caja_estrella = Rect::from_min_size(imagen.min + vec2(8.0, 8.0), vec2(28.0, 28.0));
+        let resp_estrella = ui.interact(caja_estrella, ui.id().with(("favorito", &clip.ruta)), Sense::click());
+        if clip.favorito || hover || resp_estrella.hovered() {
+            p.circle_filled(caja_estrella.center(), 14.0, Color32::from_black_alpha(if resp_estrella.hovered() { 200 } else { 150 }));
+            let (icono, color) = if clip.favorito { (icono::ESTRELLA_LLENA, AMARILLO) } else { (icono::ESTRELLA, Color32::WHITE) };
+            p.text(caja_estrella.center(), Align2::CENTER_CENTER, icono, FontId::new(14.0, iconos()), color);
+        }
+        let ayuda = if clip.favorito { "Quitar de favoritos" } else { "Favorito: la limpieza automática nunca lo borra" };
+        if resp_estrella.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(ayuda).clicked() {
+            self.biblioteca.alternar_favorito(&clip.ruta);
+        }
         // Duración, abajo a la derecha de la miniatura.
         if let Some(d) = clip.duracion {
             let g = una_linea(ui, &texto_duracion(d), FontId::new(12.0, semibold()), Color32::WHITE, 100.0);
@@ -194,6 +214,10 @@ impl App {
             }
             if ui.button("Abrir con el reproductor de Windows").clicked() {
                 crate::abrir::archivo(&clip.ruta);
+                ui.close_menu();
+            }
+            if ui.button(if clip.favorito { "Quitar de favoritos" } else { "Marcar como favorito" }).clicked() {
+                self.biblioteca.alternar_favorito(&clip.ruta);
                 ui.close_menu();
             }
             ui.separator();

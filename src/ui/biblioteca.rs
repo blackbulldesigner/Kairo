@@ -25,6 +25,8 @@ pub struct Clip {
     pub tamano: u64,
     pub modificado: SystemTime,
     pub duracion: Option<f64>,
+    /// Con estrella: la limpieza automática no lo borra.
+    pub favorito: bool,
     /// Clip de Kairo de antes de la 0.7.2 con pistas separadas: hay que marcar la mezcla (ver `pistas_mp4`).
     reparar: bool,
 }
@@ -56,6 +58,7 @@ pub struct Biblioteca {
     pedir: Sender<PathBuf>,
     recibir: Receiver<Resultado>,
     pub filtro_juego: Option<String>,
+    pub solo_favoritos: bool,
     pub busqueda: String,
     pub orden: Orden,
     /// Clip que se está renombrando (con el nombre nuevo) o por mandar a la Papelera.
@@ -79,6 +82,7 @@ impl Biblioteca {
             pedir,
             recibir,
             filtro_juego: None,
+            solo_favoritos: false,
             busqueda: String::new(),
             orden: Orden::Nuevos,
             renombrando: None,
@@ -175,6 +179,7 @@ impl Biblioteca {
             .clips
             .iter()
             .filter(|c| self.filtro_juego.is_none() || c.juego == self.filtro_juego)
+            .filter(|c| !self.solo_favoritos || c.favorito)
             .filter(|c| {
                 busqueda.is_empty()
                     || c.nombre.to_lowercase().contains(&busqueda)
@@ -206,9 +211,24 @@ impl Biblioteca {
         Ok(())
     }
 
+    pub fn favoritos(&self) -> usize {
+        self.clips.iter().filter(|c| c.favorito).count()
+    }
+
+    /// Pone o saca la estrella (en los datos del clip; si no tiene, se crean).
+    pub fn alternar_favorito(&mut self, ruta: &Path) {
+        // Un video que no hizo Kairo queda con datos de versión 0: así la limpieza nunca lo cuenta como suyo.
+        let mut d = datos_clip::leer(ruta).unwrap_or_default();
+        d.favorito = !d.favorito;
+        datos_clip::escribir(ruta, &d);
+        if let Some(c) = self.clips.iter_mut().find(|c| c.ruta == ruta) {
+            c.favorito = d.favorito;
+        }
+    }
+
     /// Manda el clip (y sus datos) a la Papelera.
     pub fn a_la_papelera(&mut self, ruta: &Path) -> Result<(), String> {
-        papelera(&[ruta.to_path_buf(), datos_clip::ruta_datos(ruta)])?;
+        crate::abrir::papelera(&[ruta.to_path_buf(), datos_clip::ruta_datos(ruta)])?;
         self.escanear();
         Ok(())
     }
@@ -241,6 +261,7 @@ fn buscar_clips(raiz: &Path, dir: &Path, nivel: u32, salida: &mut Vec<Clip>) {
             tamano: meta.len(),
             modificado: meta.modified().unwrap_or(UNIX_EPOCH),
             reparar: datos.as_ref().is_some_and(|d| d.pistas.len() > 1 && !d.mezcla_marcada),
+            favorito: datos.as_ref().is_some_and(|d| d.favorito),
             duracion: datos.map(|d| d.duracion).filter(|d| *d > 0.0),
             ruta,
         });
@@ -300,32 +321,6 @@ fn fecha_local(segundos: u64) -> String {
 pub fn texto_duracion(s: f64) -> String {
     let s = s.round() as u64;
     format!("{}:{:02}", s / 60, s % 60)
-}
-
-fn papelera(rutas: &[PathBuf]) -> Result<(), String> {
-    use windows::Win32::UI::Shell::{SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE, SHFILEOPSTRUCTW};
-    // Lista de rutas separadas por \0 y terminada en \0\0 (solo las que existen).
-    let mut desde: Vec<u16> = Vec::new();
-    for r in rutas.iter().filter(|r| r.exists()) {
-        desde.extend(r.as_os_str().to_string_lossy().encode_utf16());
-        desde.push(0);
-    }
-    if desde.is_empty() {
-        return Ok(());
-    }
-    desde.push(0);
-    let mut op = SHFILEOPSTRUCTW {
-        wFunc: FO_DELETE,
-        pFrom: windows::core::PCWSTR(desde.as_ptr()),
-        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI).0 as u16,
-        ..Default::default()
-    };
-    let r = unsafe { SHFileOperationW(&mut op) };
-    if r == 0 && !op.fAnyOperationsAborted.as_bool() {
-        Ok(())
-    } else {
-        Err(format!("No se pudo mandar a la Papelera (código {r})."))
-    }
 }
 
 // --- Miniaturas --------------------------------------------------------------------------------

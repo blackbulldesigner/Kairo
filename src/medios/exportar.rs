@@ -292,6 +292,7 @@ unsafe fn exportar_en(p: &Pedido, tmp: &std::path::Path, progreso: &dyn Fn(f32),
         fps: info.fps.round() as u32,
         creado: crate::registro::fecha_para_archivo(),
         mezcla_marcada: true,
+        favorito: false,
     };
     crate::datos_clip::escribir(&p.destino, &datos);
     Ok(Resultado { inicio_real: t0 as f64 / SEGUNDO as f64, duracion })

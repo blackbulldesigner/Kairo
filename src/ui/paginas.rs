@@ -13,6 +13,16 @@ use crate::version;
 
 const RAM_SI_NO_SE_SABE: u64 = 8 * 1024 * 1024 * 1024;
 
+/// Lo que muestra la tarjeta de la limpieza (se recalcula cada 5 s o si cambian los límites).
+#[derive(Clone)]
+pub(super) struct ResumenLimpieza {
+    total: usize,
+    bytes: u64,
+    favoritos: usize,
+    borrar: usize,
+    borrar_bytes: u64,
+}
+
 impl App {
     fn ahora_ui(&self, ui: &Ui) -> f64 {
         ui.input(|i| i.time)
@@ -511,6 +521,104 @@ impl App {
                 interruptor(ui, &mut self.cfg.sonido_al_guardar, true);
             });
         });
+        self.tarjeta_limpieza(ui);
+    }
+
+    /// Guardado → Limpieza automática: los límites, cuánto ocupan los clips y qué se borraría ahora.
+    fn tarjeta_limpieza(&mut self, ui: &mut Ui) {
+        // Lo que hay en la carpeta y lo que se borraría, recalculado si cambian los límites o cada 5 s.
+        let ahora = self.ahora_ui(ui);
+        let clave = (self.cfg.carpeta.clone(), self.cfg.limpieza.clone());
+        let vencido = self.limpieza_resumen.as_ref().map_or(true, |(k, hasta, _)| *k != clave || ahora >= *hasta);
+        if vencido {
+            let clips = crate::limpieza::clips_de_kairo(&self.cfg.carpeta);
+            let plan = crate::limpieza::plan(&self.cfg.carpeta, &self.cfg.limpieza);
+            let r = ResumenLimpieza {
+                total: clips.len(),
+                bytes: clips.iter().map(|c| c.tamano).sum(),
+                favoritos: clips.iter().filter(|c| c.favorito).count(),
+                borrar: plan.len(),
+                borrar_bytes: plan.iter().map(|c| c.tamano).sum(),
+            };
+            self.limpieza_resumen = Some((clave, ahora + 5.0, r));
+        }
+        let Some((_, _, r)) = self.limpieza_resumen.clone() else { return };
+        let mut limpiar = false;
+        tarjeta(ui, "Limpieza automática", |ui| {
+            let l = &mut self.cfg.limpieza;
+            fila(
+                ui,
+                "Borrar clips viejos solos",
+                Some("Después de guardar cada clip, Kairo borra los que pasen de los límites. Nunca borra tus favoritos (la estrella en la Biblioteca) ni videos que no hizo Kairo."),
+                |ui| {
+                    interruptor(ui, &mut l.activa, true);
+                },
+            );
+            if l.activa {
+                separador(ui);
+                fila(ui, "Más viejos que", None, |ui| {
+                    segmentos(
+                        ui,
+                        "dias",
+                        &mut l.dias,
+                        &[(0, None, "Sin límite"), (7, None, "7 días"), (14, None, "14"), (30, None, "30"), (60, None, "60"), (90, None, "90")],
+                        None,
+                        32.0,
+                    );
+                });
+                separador(ui);
+                fila(ui, "Si todos juntos ocupan más de", Some("Se borran los más viejos hasta bajar del límite."), |ui| {
+                    segmentos(
+                        ui,
+                        "gb",
+                        &mut l.gb,
+                        &[(0, None, "Sin límite"), (10, None, "10 GB"), (25, None, "25"), (50, None, "50"), (100, None, "100"), (200, None, "200")],
+                        None,
+                        32.0,
+                    );
+                });
+                separador(ui);
+                fila(
+                    ui,
+                    "Borrar sin pasar por la Papelera",
+                    Some("Libera el espacio al instante, pero no se pueden recuperar. Apagado, van a la Papelera de reciclaje."),
+                    |ui| {
+                        interruptor(ui, &mut l.sin_papelera, true);
+                    },
+                );
+            }
+            separador(ui);
+            let texto = format!(
+                "{} clip{} · {}{}",
+                r.total,
+                if r.total == 1 { "" } else { "s" },
+                config::texto_bytes(r.bytes),
+                if r.favoritos > 0 { format!(" · {} favorito{}", r.favoritos, if r.favoritos == 1 { "" } else { "s" }) } else { String::new() }
+            );
+            let desc = if !l.activa {
+                "Los que hizo Kairo en tu carpeta de clips.".to_string()
+            } else if r.borrar == 0 {
+                "Con estos límites, ahora no se borraría ninguno.".to_string()
+            } else {
+                format!("Con estos límites, ahora se borrarían {} ({}).", r.borrar, config::texto_bytes(r.borrar_bytes))
+            };
+            fila(ui, &texto, Some(&desc), |ui| {
+                if l.activa {
+                    limpiar = boton(ui, Some(icono::QUITAR), "Limpiar ahora", Estilo::Secundario, r.borrar > 0).clicked();
+                }
+            });
+        });
+        if limpiar {
+            match crate::limpieza::limpiar(&self.cfg.carpeta, &self.cfg.limpieza) {
+                Ok((n, b)) => {
+                    let donde = if self.cfg.limpieza.sin_papelera { "borrados" } else { "en la Papelera" };
+                    self.avisar(format!("{n} clips {donde} ({}).", config::texto_bytes(b)), false);
+                }
+                Err(e) => self.avisar(e, true),
+            }
+            self.limpieza_resumen = None;
+            self.biblioteca.escanear_ya();
+        }
     }
 
     pub(super) fn pagina_atajos(&mut self, ui: &mut Ui) {

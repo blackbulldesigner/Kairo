@@ -195,6 +195,26 @@ impl Default for VideoAvanzado {
 pub const MBPS_MIN: f32 = 2.0;
 pub const MBPS_MAX: f32 = 80.0;
 
+/// Guardado → Limpieza automática: qué clips viejos se borran solos. Nunca los favoritos ni los videos que
+/// no hizo Kairo (ver `limpieza.rs`).
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Limpieza {
+    pub activa: bool,
+    /// Borrar los de más de tantos días (0 = sin límite).
+    pub dias: u32,
+    /// Si todos juntos pasan de tantos GB, borrar los más viejos hasta bajar (0 = sin límite).
+    pub gb: u32,
+    /// Borrar del todo en vez de mandarlos a la Papelera.
+    pub sin_papelera: bool,
+}
+
+impl Default for Limpieza {
+    fn default() -> Self {
+        Self { activa: false, dias: 30, gb: 50, sin_papelera: false }
+    }
+}
+
 /// Lo que necesita el encoder de video (sale de la configuración: ver `Config::ajustes_encoder`).
 #[derive(Clone, Copy, Debug)]
 pub struct AjustesEncoder {
@@ -404,6 +424,7 @@ pub struct Config {
     pub buscar_actualizaciones: bool,
     /// Dibujar el puntero del mouse en los clips.
     pub mostrar_mouse: bool,
+    pub limpieza: Limpieza,
 }
 
 impl Default for Config {
@@ -435,6 +456,7 @@ impl Default for Config {
             atajo_carpeta: None,
             buscar_actualizaciones: true,
             mostrar_mouse: false,
+            limpieza: Limpieza::default(),
         }
     }
 }

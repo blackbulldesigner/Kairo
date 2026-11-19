@@ -58,6 +58,8 @@ Ver `README.md` para el plan por fases.
   `biblioteca.rs` + `pagina_biblioteca.rs` la biblioteca de clips y sus miniaturas).
 - `src/datos_clip.rs`: datos de cada clip (`clip.mp4.kairo`, oculto): juego, nombres de las pistas, formato.
 - `src/pistas_mp4.rs`: marca la mezcla como la pista de audio que tocan todos los reproductores.
+- `src/limpieza.rs`: limpieza automática (después de guardar, en la grabadora, con prioridad baja). Solo clips con
+  datos de Kairo (`version >= 1`) y sin estrella; `cargo test` prueba el plan. `--captura-ui guardado-limpieza`.
 - `src/medios/` (solo la ventana, nunca la grabadora): `reproductor.rs` (hilo de video que achica a 1280×720 y
   hilo de audio con WASAPI que mezcla las pistas con su volumen y lleva el reloj), `exportar.rs` (recorte sin
   recodificar el video, audio rearmado por pista) y `comprimir.rs` (recodificar con el sink writer). La interfaz

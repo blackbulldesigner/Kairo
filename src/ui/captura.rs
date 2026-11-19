@@ -18,6 +18,8 @@ pub struct Pedido {
     pub programas: bool,
     /// "grabacion-avanzado": la página Grabación con las opciones avanzadas a la vista (sin guardarlo).
     pub avanzado: bool,
+    /// "guardado-limpieza": la página Guardado con la limpieza automática prendida (sin guardarlo).
+    pub limpieza: bool,
     ruta: PathBuf,
     cuadros: u32,
     pedida: bool,
@@ -32,13 +34,14 @@ pub fn desde_args(args: &[String]) -> Option<Pedido> {
     let modo_juego = nombre == "grabacion-juego";
     let programas = nombre == "audio-programas";
     let avanzado = nombre == "grabacion-avanzado";
-    let pagina = Pagina::desde(nombre.trim_end_matches("-juego").trim_end_matches("-programas").trim_end_matches("-avanzado"))?;
+    let limpieza = nombre == "guardado-limpieza";
+    let pagina = Pagina::desde(nombre.trim_end_matches("-juego").trim_end_matches("-programas").trim_end_matches("-avanzado").trim_end_matches("-limpieza"))?;
     let ruta = PathBuf::from(args.get(i + 2)?);
     let tamano = args.get(i + 3).and_then(|t| {
         let (w, h) = t.split_once('x')?;
         Some([w.parse().ok()?, h.parse().ok()?])
     });
-    Some(Pedido { pagina, tamano, modo_juego, programas, avanzado, ruta, cuadros: 0, pedida: false })
+    Some(Pedido { pagina, tamano, modo_juego, programas, avanzado, limpieza, ruta, cuadros: 0, pedida: false })
 }
 
 /// Con `--captura-ui biblioteca`, `KAIRO_CAPTURA_CLIP=<mp4>` abre ese clip en el visor y `KAIRO_CAPTURA_MODO`
@@ -63,7 +66,7 @@ pub fn del_instalador(args: &[String]) -> Option<Pedido> {
     }
     let i = args.iter().position(|a| a == "--captura-instalador")?;
     let ruta = PathBuf::from(args.get(i + 1)?);
-    Some(Pedido { pagina: Pagina::AcercaDe, tamano: None, modo_juego: false, programas: false, avanzado: false, ruta, cuadros: 0, pedida: false })
+    Some(Pedido { pagina: Pagina::AcercaDe, tamano: None, modo_juego: false, programas: false, avanzado: false, limpieza: false, ruta, cuadros: 0, pedida: false })
 }
 
 impl Pedido {

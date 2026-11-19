@@ -23,6 +23,7 @@ mod estado;
 mod grabadora;
 mod icono;
 mod instalacion;
+mod limpieza;
 mod medios;
 mod pistas_mp4;
 mod red;
