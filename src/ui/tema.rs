@@ -49,6 +49,7 @@ pub mod icono {
     pub const DESCARGAR: &str = "\u{E896}";
     pub const BUSCAR: &str = "\u{E721}";
     pub const VOLUMEN: &str = "\u{E767}";
+    pub const CHECK: &str = "\u{E73E}";
     /// Cruz (quitar, cerrar).
     pub const CERRAR: &str = "\u{E711}";
     pub const SILENCIO: &str = "\u{E74F}";

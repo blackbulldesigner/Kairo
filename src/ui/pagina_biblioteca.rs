@@ -23,6 +23,12 @@ fn una_linea(ui: &Ui, texto: &str, fuente: FontId, color: Color32, ancho: f32) -
     ui.fonts(|f| f.layout_job(job))
 }
 
+fn alternar_seleccion(seleccion: &mut std::collections::HashSet<std::path::PathBuf>, ruta: &std::path::Path) {
+    if !seleccion.remove(ruta) {
+        seleccion.insert(ruta.to_path_buf());
+    }
+}
+
 pub(super) fn mostrar_en_carpeta(ruta: &std::path::Path) {
     crate::abrir::mostrar(ruta);
 }
@@ -79,6 +85,48 @@ impl App {
             });
         });
         ui.add_space(10.0);
+
+        // Para las capturas de prueba: `KAIRO_CAPTURA_SELECCION=2` selecciona los primeros clips.
+        if cfg!(feature = "dev") && self.biblioteca.seleccion.is_empty() {
+            if let Some(n) = std::env::var("KAIRO_CAPTURA_SELECCION").ok().and_then(|n| n.parse::<usize>().ok()) {
+                let primeros: Vec<_> = self.biblioteca.visibles().into_iter().take(n).map(|c| c.ruta).collect();
+                self.biblioteca.seleccion.extend(primeros);
+            }
+        }
+        // Con clips seleccionados: cuántos, cuánto pesan y qué hacer con ellos (Esc deja de seleccionar).
+        if !self.biblioteca.seleccion.is_empty() {
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !self.biblioteca.borrando_seleccion {
+                self.biblioteca.seleccion.clear();
+            }
+        }
+        if !self.biblioteca.seleccion.is_empty() {
+            let n = self.biblioteca.seleccion.len();
+            let peso: u64 = self.biblioteca.clips.iter().filter(|c| self.biblioteca.seleccion.contains(&c.ruta)).map(|c| c.tamano).sum();
+            let (mut todos, mut borrar, mut cancelar) = (false, false, false);
+            egui::Frame::none().fill(SELECCION).stroke(Stroke::new(1.0_f32, ACENTO_APAGADO)).rounding(10.0).inner_margin(egui::Margin::symmetric(14.0, 6.0)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(icono::CHECK).family(iconos()).size(13.0).color(TEXTO_SEL));
+                    ui.label(RichText::new(format!("{n} seleccionado{} · {}", if n == 1 { "" } else { "s" }, texto_bytes(peso))).size(13.5).color(TEXTO_SEL));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        cancelar = boton(ui, None, "Cancelar", Estilo::Texto, true).clicked();
+                        borrar = boton(ui, Some(icono::QUITAR), "Mandar a la Papelera", Estilo::Primario, true).clicked();
+                        todos = boton(ui, None, "Seleccionar todos", Estilo::Secundario, true).clicked();
+                    });
+                });
+            });
+            ui.add_space(10.0);
+            if todos {
+                let visibles: Vec<_> = self.biblioteca.visibles().into_iter().map(|c| c.ruta).collect();
+                self.biblioteca.seleccion.extend(visibles);
+            }
+            if borrar {
+                self.biblioteca.borrando_seleccion = true;
+            }
+            if cancelar {
+                self.biblioteca.seleccion.clear();
+            }
+        }
 
         // Favoritos y juegos (como chips).
         let juegos = self.biblioteca.juegos();
@@ -158,7 +206,10 @@ impl App {
             let sombra = egui::epaint::Shadow { offset: vec2(0.0, 8.0), blur: 22.0, spread: 0.0, color: Color32::from_black_alpha((120.0 * h) as u8) };
             p.add(sombra.as_shape(rect, Rounding::same(12.0)));
         }
-        p.rect(rect, 12.0, PANEL, Stroke::new(1.0_f32, mezclar(BORDE, ACENTO, h * 0.8)));
+        let seleccionado = self.biblioteca.seleccion.contains(&clip.ruta);
+        let modo_seleccion = !self.biblioteca.seleccion.is_empty();
+        let s = animar::hacia(ui.ctx(), resp.id.with("sel"), seleccionado);
+        p.rect(rect, 12.0, mezclar(PANEL, SELECCION, s), Stroke::new(1.0 + s, mezclar(mezclar(BORDE, ACENTO, h * 0.8), ACENTO, s)));
 
         // Miniatura (o un fondo con el ícono mientras se genera).
         let imagen = Rect::from_min_size(rect.min, vec2(ancho, alto_imagen)).shrink(1.0);
@@ -194,6 +245,22 @@ impl App {
             p.rect_filled(imagen, redondeo, Color32::from_black_alpha((60.0 * h) as u8));
             p.circle_filled(imagen.center(), 22.0, ACENTO.gamma_multiply(0.9 * h));
             p.text(imagen.center() + vec2(1.5, 0.0), Align2::CENTER_CENTER, icono::REPRODUCIR, FontId::new(16.0, iconos()), Color32::WHITE.gamma_multiply(h));
+        }
+        // Círculo para seleccionar, arriba a la derecha: al pasar el mouse, o siempre si ya se está seleccionando.
+        let caja_sel = Rect::from_min_size(pos2(imagen.right() - 36.0, imagen.top() + 8.0), vec2(28.0, 28.0));
+        let resp_sel = ui.interact(caja_sel, ui.id().with(("seleccion", &clip.ruta)), Sense::click());
+        if seleccionado || modo_seleccion || hover || resp_sel.hovered() {
+            let c = caja_sel.center();
+            if seleccionado {
+                p.circle_filled(c, 12.0, ACENTO);
+                p.text(c, Align2::CENTER_CENTER, icono::CHECK, FontId::new(12.0, iconos()), Color32::WHITE);
+            } else {
+                p.circle_filled(c, 12.0, Color32::from_black_alpha(if resp_sel.hovered() { 200 } else { 130 }));
+                p.circle_stroke(c, 10.5, Stroke::new(1.5_f32, Color32::WHITE));
+            }
+        }
+        if resp_sel.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("Seleccionar (también Ctrl+clic)").clicked() {
+            alternar_seleccion(&mut self.biblioteca.seleccion, &clip.ruta);
         }
         // Estrella de favorito, arriba a la izquierda: siempre si es favorito; si no, al pasar el mouse.
         let caja_estrella = Rect::from_min_size(imagen.min + vec2(8.0, 8.0), vec2(28.0, 28.0));
@@ -231,9 +298,18 @@ impl App {
         let meta = una_linea(ui, &datos.join(" · "), FontId::proportional(12.0), SECUNDARIO, ancho_texto);
         p.galley(pos2(x, imagen.bottom() + 32.0), meta, SECUNDARIO);
 
-        let resp = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text("Clic para verlo · clic derecho para más opciones");
+        let resp = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(if modo_seleccion {
+            "Clic para seleccionar o sacar de la selección"
+        } else {
+            "Clic para verlo · Ctrl+clic para seleccionar · clic derecho para más opciones"
+        });
         if resp.clicked() {
-            self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Ver);
+            // Seleccionando (o con Ctrl), el clic suma o saca de la selección; si no, abre el clip.
+            if modo_seleccion || ui.input(|i| i.modifiers.ctrl) {
+                alternar_seleccion(&mut self.biblioteca.seleccion, &clip.ruta);
+            } else {
+                self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Ver);
+            }
         }
         resp.context_menu(|ui| {
             if ui.button("Ver").clicked() {
@@ -275,6 +351,33 @@ impl App {
 
     /// Ventanitas para renombrar y para confirmar el borrado.
     fn dialogos_biblioteca(&mut self, ctx: &egui::Context) {
+        if self.biblioteca.borrando_seleccion {
+            let n = self.biblioteca.seleccion.len();
+            let (mut abierto, mut borrar, mut cancelar) = (true, false, false);
+            egui::Window::new("Mandar a la Papelera")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+                .open(&mut abierto)
+                .show(ctx, |ui| {
+                    let texto = format!("{n} clip{} van a la Papelera de reciclaje. Los puedes recuperar desde ahí.", if n == 1 { "" } else { "s" });
+                    ui.label(RichText::new(texto).color(SECUNDARIO));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        borrar = boton(ui, Some(icono::QUITAR), "Mandar a la Papelera", Estilo::Primario, true).clicked();
+                        cancelar = boton(ui, None, "Cancelar", Estilo::Texto, true).clicked();
+                    });
+                });
+            if borrar {
+                self.biblioteca.borrando_seleccion = false;
+                match self.biblioteca.seleccion_a_la_papelera() {
+                    Ok(n) => self.avisar(format!("{n} clip{} a la Papelera.", if n == 1 { "" } else { "s" }), false),
+                    Err(e) => self.avisar(e, true),
+                }
+            } else if !abierto || cancelar || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.biblioteca.borrando_seleccion = false;
+            }
+        }
         if let Some((ruta, mut nombre)) = self.biblioteca.renombrando.take() {
             let mut abierto = true;
             let mut aceptar = false;

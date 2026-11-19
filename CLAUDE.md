@@ -39,6 +39,7 @@ Ver `README.md` para el plan por fases.
 - Animaciones suaves con `src/ui/animar.rs` (`suave` y `hacia`: ease-out, piden cuadros solo mientras algo se
   mueve). Hover y selección se animan en cada widget; la página nueva entra con fundido; la barra de guardar sube.
 - `KAIRO_CAPTURA_HOVER=<nombre del clip>` muestra esa tarjeta de la biblioteca con el mouse encima en la captura.
+- `KAIRO_CAPTURA_SELECCION=<n>` selecciona los primeros `n` clips de la biblioteca en la captura (para ver la barra de selección).
 - Para revisar una página sin abrirla a mano: `cargo run --features dev -- --captura-ui <pagina> <archivo.png>`.
 
 ## Código

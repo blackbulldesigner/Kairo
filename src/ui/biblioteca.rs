@@ -64,6 +64,10 @@ pub struct Biblioteca {
     /// Clip que se está renombrando (con el nombre nuevo) o por mandar a la Papelera.
     pub renombrando: Option<(PathBuf, String)>,
     pub borrando: Option<PathBuf>,
+    /// Clips seleccionados (para mandar varios a la Papelera de una).
+    pub seleccion: HashSet<PathBuf>,
+    /// Pidiendo confirmación para mandar la selección a la Papelera.
+    pub borrando_seleccion: bool,
     /// Clips que ya se mandaron a reparar en esta sesión.
     reparados: HashSet<PathBuf>,
 }
@@ -88,6 +92,8 @@ impl Biblioteca {
             renombrando: None,
             borrando: None,
             reparados: HashSet::new(),
+            seleccion: HashSet::new(),
+            borrando_seleccion: false,
         }
     }
 
@@ -128,6 +134,8 @@ impl Biblioteca {
         }
         let rutas: HashSet<&PathBuf> = clips.iter().map(|c| &c.ruta).collect();
         self.miniaturas.retain(|r, _| rutas.contains(r));
+        // Lo que ya no está deja de estar seleccionado.
+        self.seleccion.retain(|r| rutas.contains(r));
         // Los clips viejos con pistas separadas: la mezcla se marca para que VLC y los celulares la toquen (en
         // otro hilo; son unos bytes por archivo).
         let reparados = &mut self.reparados;
@@ -224,6 +232,16 @@ impl Biblioteca {
         if let Some(c) = self.clips.iter_mut().find(|c| c.ruta == ruta) {
             c.favorito = d.favorito;
         }
+    }
+
+    /// Manda los clips seleccionados (y sus datos) a la Papelera. Devuelve cuántos.
+    pub fn seleccion_a_la_papelera(&mut self) -> Result<usize, String> {
+        let rutas: Vec<PathBuf> = self.seleccion.iter().flat_map(|r| [r.clone(), datos_clip::ruta_datos(r)]).collect();
+        let n = self.seleccion.len();
+        crate::abrir::papelera(&rutas)?;
+        self.seleccion.clear();
+        self.escanear();
+        Ok(n)
     }
 
     /// Manda el clip (y sus datos) a la Papelera.
