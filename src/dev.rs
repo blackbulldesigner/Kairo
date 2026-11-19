@@ -59,6 +59,10 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     if pos("--prueba-desinstalar").is_some() {
         return Some(informar(prueba_desinstalar()));
     }
+    if let Some(k) = pos("--prueba-tira") {
+        let n = |i: usize| args.get(k + i).and_then(|s| s.parse::<usize>().ok());
+        return Some(informar(prueba_tira(args.get(k + 1)?, args.get(k + 2)?, n(3)?, n(4)?, n(5)?)));
+    }
     if let Some(k) = pos("--prueba-medios") {
         return Some(informar(prueba_medios(args.get(k + 1)?)));
     }
@@ -66,6 +70,60 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
         return Some(informar(prueba_actualizacion(args.get(k + 1).map(|s| s.as_str()))));
     }
     None
+}
+
+/// `--prueba-tira <mp4> <png> <y> <alto> <n>`: `n` cuadros repartidos en el clip, de cada uno solo la franja
+/// de `alto` filas desde `y`, apiladas en una imagen (para ver cómo cambia una parte de la pantalla).
+fn prueba_tira(ruta: &str, png: &str, y0: usize, alto: usize, n: usize) -> Result<()> {
+    use crate::medios::{bytes_de, duracion, flujos, ir_a};
+    crate::medios::iniciar();
+    unsafe {
+        let mut atributos = None;
+        MFCreateAttributes(&mut atributos, 1)?;
+        let atributos = atributos.ok_or_else(|| anyhow!("sin atributos"))?;
+        atributos.SetUINT32(&MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1)?;
+        let l = MFCreateSourceReaderFromURL(&HSTRING::from(ruta), &atributos)?;
+        let (video, _) = flujos(&l);
+        let video = video.ok_or_else(|| anyhow!("sin video"))?;
+        let _ = l.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0 as u32, false);
+        l.SetStreamSelection(video, true)?;
+        let rgb = MFCreateMediaType()?;
+        rgb.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+        rgb.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
+        l.SetCurrentMediaType(video, None, &rgb)?;
+        let s = l.GetCurrentMediaType(video)?.GetUINT64(&MF_MT_FRAME_SIZE)?;
+        let (w, h) = ((s >> 32) as usize, (s & 0xFFFF_FFFF) as usize);
+        let dur = duracion(&l);
+        let alto = alto.min(h.saturating_sub(y0));
+        let mut salida = vec![0u8; w * alto * n * 4];
+        for k in 0..n {
+            let t = (dur * k as f64 / n as f64 * 1e7) as i64;
+            ir_a(&l, t)?;
+            loop {
+                let (mut flags, mut ts, mut m) = (0u32, 0i64, None);
+                l.ReadSample(video, 0, None, Some(&mut flags), Some(&mut ts), Some(&mut m))?;
+                if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
+                    break;
+                }
+                let Some(m) = m else { continue };
+                if ts + 100_000 < t {
+                    continue;
+                }
+                let b = bytes_de(&m)?;
+                for y in 0..alto {
+                    for x in 0..w {
+                        let i = ((y0 + y) * w + x) * 4;
+                        let o = ((k * alto + y) * w + x) * 4;
+                        salida[o..o + 4].copy_from_slice(&[b[i + 2], b[i + 1], b[i], 255]);
+                    }
+                }
+                break;
+            }
+        }
+        guardar_png(Path::new(png), w as u32, (alto * n) as u32, &salida)?;
+        println!("tira de {n} cuadros ({w}×{alto} cada uno) en {png}");
+    }
+    Ok(())
 }
 
 /// Reproduce, busca, recorta y comprime un clip, y revisa cada resultado. Los archivos nuevos quedan al lado
@@ -100,6 +158,24 @@ fn prueba_medios(ruta: &str) -> Result<()> {
     println!("buscar {mitad:.2} s en pausa: reloj {:.2} s, cuadro a los {c:?}", r.posicion());
     if primero.is_none() || cuadros < 20 || c.is_none_or(|t| (t - mitad).abs() > 0.1) {
         return Err(anyhow!("el reproductor no anduvo bien"));
+    }
+    // Muchas búsquedas seguidas mientras suena (como al arrastrar la barra): tiene que quedar en la última y
+    // seguir avanzando, sin volver a posiciones viejas.
+    r.buscar(0.5);
+    r.reproducir();
+    std::thread::sleep(Duration::from_millis(300));
+    let ultima = (info.duracion - 2.5).max(1.0);
+    for k in 0..100 {
+        r.buscar(0.5 + (ultima - 0.5) * k as f64 / 99.0);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    std::thread::sleep(Duration::from_millis(400));
+    let (p1, s1) = (r.posicion(), r.reproduciendo());
+    std::thread::sleep(Duration::from_millis(600));
+    let p2 = r.posicion();
+    println!("100 búsquedas sonando (la última a {ultima:.2} s): a los 0,4 s está en {p1:.2} s (¿sonando? {s1}), 0,6 s después en {p2:.2} s");
+    if !(ultima..ultima + 0.9).contains(&p1) || p2 < p1 + 0.4 || p2 > p1 + 0.8 {
+        return Err(anyhow!("después de muchas búsquedas, el reloj quedó mal"));
     }
     drop(r);
 

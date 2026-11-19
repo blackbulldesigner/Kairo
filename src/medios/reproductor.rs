@@ -444,51 +444,67 @@ fn hilo_audio(ruta: &Path, c: &Compartido, ordenes: Receiver<Orden>, cantidad: u
 
     while !c.salir.load(Ordering::SeqCst) {
         let espera = if reproduciendo { Duration::from_millis(5) } else { Duration::from_millis(50) };
-        match ordenes.recv_timeout(espera) {
-            Ok(Orden::Reproducir) if !reproduciendo => {
-                let mut desde = c.posicion();
-                if al_final || desde >= c.duracion - 0.05 {
-                    desde = 0.0;
-                    buscar_todo(&mut pistas, 0.0);
-                }
-                al_final = false;
-                prellenar(&mut pistas);
-                if let Some(s) = &salida {
-                    unsafe { s.arrancar() };
-                }
-                c.poner_reloj(desde, true);
-                reproduciendo = true;
+        // Se juntan todas las órdenes que esperan y se aplica solo lo último: al arrastrar la barra llegan
+        // muchas búsquedas seguidas, y hacerlas de a una atrasaba el reloj (la barra iba y venía).
+        let mut lista = match ordenes.recv_timeout(espera) {
+            Ok(o) => vec![o],
+            Err(RecvTimeoutError::Timeout) => Vec::new(),
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        lista.extend(ordenes.try_iter());
+        let buscar = lista.iter().rev().find_map(|o| match o {
+            Orden::Buscar(t) => Some(*t),
+            _ => None,
+        });
+        let quiere = lista.iter().rev().find_map(|o| match o {
+            Orden::Reproducir => Some(true),
+            Orden::Pausar => Some(false),
+            Orden::Buscar(_) => None,
+        });
+
+        if quiere == Some(false) && reproduciendo {
+            let t = c.posicion();
+            if let Some(s) = &salida {
+                unsafe { s.parar() };
             }
-            Ok(Orden::Pausar) if reproduciendo => {
-                let t = c.posicion();
-                if let Some(s) = &salida {
-                    unsafe { s.parar() };
-                }
-                c.poner_reloj(t, false);
-                reproduciendo = false;
-                // Lo decodificado de más ya no sirve: el audio vuelve justo a donde quedó.
+            c.poner_reloj(t, false);
+            reproduciendo = false;
+            // Lo decodificado de más ya no sirve: el audio vuelve justo a donde quedó.
+            if buscar.is_none() {
                 for p in pistas.iter_mut() {
                     p.buscar(t);
                 }
             }
-            Ok(Orden::Buscar(t)) => {
+        }
+        if let Some(t) = buscar {
+            if reproduciendo {
                 if let Some(s) = &salida {
-                    if reproduciendo {
-                        unsafe { s.parar() };
-                    }
+                    unsafe { s.parar() };
                 }
-                al_final = false;
-                buscar_todo(&mut pistas, t);
-                if reproduciendo {
-                    prellenar(&mut pistas);
-                    if let Some(s) = &salida {
-                        unsafe { s.arrancar() };
-                    }
-                }
-                c.poner_reloj(t, reproduciendo);
             }
-            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+            al_final = false;
+            buscar_todo(&mut pistas, t);
+            if reproduciendo {
+                prellenar(&mut pistas);
+                if let Some(s) = &salida {
+                    unsafe { s.arrancar() };
+                }
+            }
+            c.poner_reloj(t, reproduciendo);
+        }
+        if quiere == Some(true) && !reproduciendo {
+            let mut desde = c.posicion();
+            if al_final || desde >= c.duracion - 0.05 {
+                desde = 0.0;
+                buscar_todo(&mut pistas, 0.0);
+            }
+            al_final = false;
+            prellenar(&mut pistas);
+            if let Some(s) = &salida {
+                unsafe { s.arrancar() };
+            }
+            c.poner_reloj(desde, true);
+            reproduciendo = true;
         }
         c.reproduciendo.store(reproduciendo, Ordering::SeqCst);
         if !reproduciendo {

@@ -22,10 +22,17 @@ pub enum Modo {
     Comprimir,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Asa {
+/// Qué se está arrastrando.
+#[derive(Clone, Copy, PartialEq)]
+enum Arrastre {
+    /// La bolita de la barra de reproducción (o un lugar vacío de la pista del recorte).
+    Cabezal,
+    /// La manija izquierda del recorte.
     Inicio,
+    /// La manija derecha.
     Fin,
+    /// La parte elegida entera: se mueve sin cambiar de largo. `agarre`: dónde se agarró (segundos).
+    Rango { agarre: f64, inicio: f64, fin: f64 },
 }
 
 /// Guardar o comprimir, corriendo en otro hilo.
@@ -51,7 +58,11 @@ pub struct Visor {
     activas: Vec<bool>,
     inicio: f64,
     fin: f64,
-    arrastrando: Option<Asa>,
+    arrastre: Option<Arrastre>,
+    /// Estaba sonando cuando se empezó a arrastrar: al soltar, sigue.
+    seguir_al_soltar: bool,
+    /// La última búsqueda hecha mientras se arrastra (para no repetir la misma).
+    ultima_busqueda: f64,
     tarea: Option<Tarea>,
     /// El último clip que se guardó o comprimió desde acá.
     hecho: Option<PathBuf>,
@@ -87,7 +98,7 @@ impl Visor {
             }
         }
         let duracion = reproductor.as_ref().map(|r| r.info.duracion).unwrap_or(0.0);
-        let v = Self {
+        let mut v = Self {
             ruta: ruta.to_path_buf(),
             nombre: ruta.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
             juego: datos.and_then(|d| d.juego),
@@ -101,11 +112,24 @@ impl Visor {
             activas: vec![true; n],
             inicio: 0.0,
             fin: duracion,
-            arrastrando: None,
+            arrastre: None,
+            seguir_al_soltar: false,
+            ultima_busqueda: -1.0,
             tarea: None,
             hecho: None,
             opcion: Opcion::Liviano,
         };
+        // Para las capturas de prueba: `KAIRO_CAPTURA_RECORTE=2,6` pone el recorte de 2 a 6 s.
+        if let Some((a, b)) = std::env::var("KAIRO_CAPTURA_RECORTE").ok().filter(|_| cfg!(feature = "dev")).and_then(|s| {
+            let (a, b) = s.split_once(',')?;
+            Some((a.parse::<f64>().ok()?, b.parse::<f64>().ok()?))
+        }) {
+            v.inicio = a.clamp(0.0, duracion);
+            v.fin = b.clamp(v.inicio, duracion);
+            if let Some(r) = &v.reproductor {
+                r.buscar(v.inicio + 1.0);
+            }
+        }
         v.aplicar_volumenes();
         v
     }
@@ -125,6 +149,184 @@ impl Visor {
 
     fn duracion(&self) -> f64 {
         self.reproductor.as_ref().map(|r| r.info.duracion).unwrap_or(0.0)
+    }
+
+    fn posicion(&self) -> f64 {
+        self.reproductor.as_ref().map(|r| r.posicion()).unwrap_or(0.0)
+    }
+
+    /// Reproducir o pausar. En el editor, si el video está fuera del recorte, arranca desde el inicio del recorte.
+    fn alternar(&self) {
+        let Some(r) = &self.reproductor else { return };
+        if !r.reproduciendo() && self.modo == Modo::Editar {
+            let p = r.posicion();
+            if p < self.inicio - 0.05 || p >= self.fin - 0.05 {
+                r.buscar(self.inicio);
+            }
+        }
+        r.alternar();
+    }
+
+    /// Mientras se arrastra, el video queda en pausa (al soltar, sigue si estaba sonando).
+    fn empezar_arrastre(&mut self, a: Arrastre) {
+        if let Some(r) = &self.reproductor {
+            self.seguir_al_soltar = r.reproduciendo();
+            if self.seguir_al_soltar {
+                r.pausar();
+            }
+        }
+        self.arrastre = Some(a);
+        self.ultima_busqueda = -1.0;
+    }
+
+    /// Busca mientras se arrastra, sin repetir la misma posición.
+    fn buscar_arrastrando(&mut self, t: f64) {
+        if (t - self.ultima_busqueda).abs() >= 0.02 {
+            if let Some(r) = &self.reproductor {
+                r.buscar(t);
+            }
+            self.ultima_busqueda = t;
+        }
+    }
+
+    fn terminar_arrastre(&mut self) {
+        // Después de mover el recorte, el video queda en su inicio: "reproducir" muestra cómo va a quedar.
+        if matches!(self.arrastre, Some(Arrastre::Inicio | Arrastre::Rango { .. })) {
+            if let Some(r) = &self.reproductor {
+                r.buscar(self.inicio);
+            }
+        }
+        self.arrastre = None;
+        if std::mem::take(&mut self.seguir_al_soltar) {
+            if let Some(r) = &self.reproductor {
+                r.reproducir();
+            }
+        }
+    }
+
+    /// La pista del recorte: todo el clip de punta a punta, la parte elegida resaltada con una manija en cada
+    /// punta (se arrastran; arrastrar el medio mueve la parte entera), y una línea donde está el video.
+    /// Debajo, el inicio y el fin.
+    fn barra_recorte(&mut self, ui: &mut Ui) {
+        const MANIJA: f32 = 14.0;
+        let (dur, pos) = (self.duracion().max(0.001), self.posicion());
+        let ancho = ui.available_width();
+        let (rect, resp) = ui.allocate_exact_size(vec2(ancho, 44.0), Sense::click_and_drag());
+        // Los tiempos van entre las manijas, para que la de cada punta entre entera.
+        let pista = Rect::from_min_max(pos2(rect.left() + MANIJA, rect.top()), pos2(rect.right() - MANIJA, rect.bottom()));
+        let x_de = |t: f64| pista.left() + (t / dur).clamp(0.0, 1.0) as f32 * pista.width();
+        let t_de = |x: f32| ((x - pista.left()) / pista.width()).clamp(0.0, 1.0) as f64 * dur;
+        let (xa, xb) = (x_de(self.inicio), x_de(self.fin));
+        let manija_a = Rect::from_min_max(pos2(xa - MANIJA, rect.top()), pos2(xa, rect.bottom()));
+        let manija_b = Rect::from_min_max(pos2(xb, rect.top()), pos2(xb + MANIJA, rect.bottom()));
+        let elegido = Rect::from_min_max(pos2(xa, rect.top()), pos2(xb, rect.bottom()));
+
+        // Qué hay bajo el mouse (para el cursor y para saber qué se arrastra).
+        let bajo = |p: egui::Pos2| -> Arrastre {
+            if manija_a.expand(4.0).contains(p) {
+                Arrastre::Inicio
+            } else if manija_b.expand(4.0).contains(p) {
+                Arrastre::Fin
+            } else if elegido.contains(p) {
+                Arrastre::Rango { agarre: t_de(p.x), inicio: self.inicio, fin: self.fin }
+            } else {
+                Arrastre::Cabezal
+            }
+        };
+        if let Some(h) = resp.hover_pos() {
+            let cursor = match self.arrastre.unwrap_or_else(|| bajo(h)) {
+                Arrastre::Inicio | Arrastre::Fin => CursorIcon::ResizeHorizontal,
+                Arrastre::Rango { .. } if self.arrastre.is_some() => CursorIcon::Grabbing,
+                Arrastre::Rango { .. } => CursorIcon::Grab,
+                Arrastre::Cabezal => CursorIcon::PointingHand,
+            };
+            ui.ctx().set_cursor_icon(cursor);
+        }
+
+        let p = ui.painter();
+        // Fondo con marcas cada 5, 10 o 30 s.
+        p.rect(pista, 6.0, FONDO, Stroke::new(1.0_f32, BORDE));
+        let paso = if dur <= 30.0 { 5.0 } else if dur <= 120.0 { 10.0 } else { 30.0 };
+        let mut t = paso;
+        while t < dur {
+            let x = x_de(t);
+            p.line_segment([pos2(x, pista.bottom() - 7.0), pos2(x, pista.bottom() - 2.0)], Stroke::new(1.0_f32, APAGADO));
+            t += paso;
+        }
+        // Lo elegido.
+        p.rect_filled(elegido, 0.0, ACENTO.gamma_multiply(0.22));
+        p.line_segment([elegido.left_top(), elegido.right_top()], Stroke::new(2.0_f32, ACENTO));
+        p.line_segment([elegido.left_bottom(), elegido.right_bottom()], Stroke::new(2.0_f32, ACENTO));
+        // Las manijas, con dos rayitas para agarrar.
+        let activa = |a: Arrastre| self.arrastre == Some(a) || (self.arrastre.is_none() && resp.hover_pos().is_some_and(|h| bajo(h) == a));
+        for (m, cual, redondeo) in [
+            (manija_a, Arrastre::Inicio, egui::Rounding { nw: 6.0, sw: 6.0, ne: 0.0, se: 0.0 }),
+            (manija_b, Arrastre::Fin, egui::Rounding { nw: 0.0, sw: 0.0, ne: 6.0, se: 6.0 }),
+        ] {
+            p.rect_filled(m, redondeo, if activa(cual) { ACENTO_HOVER } else { ACENTO });
+            for dx in [-2.0, 2.0] {
+                let x = m.center().x + dx;
+                p.line_segment([pos2(x, m.center().y - 7.0), pos2(x, m.center().y + 7.0)], Stroke::new(1.5_f32, Color32::WHITE));
+            }
+        }
+        // Dónde está el video.
+        let xp = x_de(pos);
+        p.line_segment([pos2(xp, rect.top() + 3.0), pos2(xp, rect.bottom() - 3.0)], Stroke::new(2.0_f32, Color32::WHITE));
+
+        // Interacción.
+        if let Some(puntero) = resp.interact_pointer_pos() {
+            if resp.drag_started() {
+                self.empezar_arrastre(bajo(puntero));
+            }
+            if resp.dragged() {
+                let t = t_de(puntero.x);
+                let dur = self.duracion();
+                let ir = match self.arrastre {
+                    Some(Arrastre::Inicio) => {
+                        self.inicio = t.clamp(0.0, (self.fin - 0.5).max(0.0));
+                        Some(self.inicio)
+                    }
+                    Some(Arrastre::Fin) => {
+                        self.fin = t.clamp((self.inicio + 0.5).min(dur), dur);
+                        Some(self.fin)
+                    }
+                    Some(Arrastre::Rango { agarre, inicio, fin }) => {
+                        let largo = fin - inicio;
+                        self.inicio = (inicio + t - agarre).clamp(0.0, (dur - largo).max(0.0));
+                        self.fin = self.inicio + largo;
+                        Some(self.inicio)
+                    }
+                    Some(Arrastre::Cabezal) => Some(t),
+                    None => None,
+                };
+                if let Some(t) = ir {
+                    self.buscar_arrastrando(t);
+                }
+            } else if resp.clicked() {
+                if let Some(r) = &self.reproductor {
+                    r.buscar(t_de(puntero.x));
+                }
+            }
+        }
+        if resp.drag_stopped() {
+            self.terminar_arrastre();
+        }
+
+        // Debajo: el inicio y el fin (juntos en una sola etiqueta si quedan muy cerca).
+        let (fila, _) = ui.allocate_exact_size(vec2(ancho, 18.0), Sense::hover());
+        let fuente = FontId::proportional(12.0);
+        let etiqueta = |x: f32, texto: String, color: Color32| {
+            let g = ui.fonts(|f| f.layout_no_wrap(texto, fuente.clone(), color));
+            let medio = g.size().x / 2.0;
+            let x = x.clamp(fila.left() + medio, fila.right() - medio);
+            ui.painter().galley(pos2(x - medio, fila.top() + 3.0), g, color);
+        };
+        if xb - xa < 120.0 {
+            etiqueta((xa + xb) / 2.0, format!("{} – {}", tiempo_fino(self.inicio), tiempo_fino(self.fin)), TEXTO);
+        } else {
+            etiqueta(xa, tiempo_fino(self.inicio), TEXTO);
+            etiqueta(xb, tiempo_fino(self.fin), TEXTO);
+        }
     }
 
     /// ¿El clip tiene pistas separadas (la mezcla y cada fuente)?
@@ -237,10 +439,10 @@ impl App {
                     i.consume_key(Modifiers::NONE, Key::Escape),
                 )
             });
+            if espacio {
+                v.alternar();
+            }
             if let Some(r) = &v.reproductor {
-                if espacio {
-                    r.alternar();
-                }
                 if izq {
                     r.buscar(r.posicion() - 5.0);
                 }
@@ -349,38 +551,43 @@ impl App {
             }
         }
         if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
-            if let Some(r) = &v.reproductor {
-                r.alternar();
-            }
+            v.alternar();
         }
         ui.add_space(8.0);
 
-        // Controles: reproducir/pausa, tiempo y la línea de tiempo.
-        if let Some(r) = &v.reproductor {
-            let dur = r.info.duracion;
-            let pos = r.posicion();
-            let mut buscar = None;
+        // Controles: reproducir/pausa, tiempo y la barra de reproducción.
+        if v.reproductor.is_some() {
+            let (dur, pos) = (v.duracion(), v.posicion());
+            // En el editor, el video se para al llegar al fin del recorte.
+            if v.modo == Modo::Editar && sonando && v.arrastre.is_none() && pos >= v.fin {
+                if let Some(r) = &v.reproductor {
+                    r.pausar();
+                    r.buscar(v.fin);
+                }
+            }
+            let mut alternar = false;
+            let mut barra = None;
             ui.horizontal(|ui| {
                 let (icono_rp, ayuda) = if sonando { (icono::PAUSA, "Pausa (Espacio)") } else { (icono::REPRODUCIR, "Reproducir (Espacio)") };
-                if boton_icono(ui, icono_rp, ayuda).clicked() {
-                    r.alternar();
-                }
+                alternar = boton_icono(ui, icono_rp, ayuda).clicked();
                 ui.add_space(4.0);
                 ui.label(RichText::new(format!("{} / {}", tiempo(pos), tiempo(dur))).size(12.5).color(SECUNDARIO).monospace());
                 ui.add_space(8.0);
-                let recorte = (v.modo == Modo::Editar).then_some((v.inicio, v.fin));
-                let (b, asa) = linea_de_tiempo(ui, dur, pos, recorte, &mut v.arrastrando);
-                buscar = b;
-                if let Some((a, t)) = asa {
-                    match a {
-                        Asa::Inicio => v.inicio = t.clamp(0.0, (v.fin - 0.5).max(0.0)),
-                        Asa::Fin => v.fin = t.clamp((v.inicio + 0.5).min(dur), dur),
-                    }
-                    buscar = Some(if a == Asa::Inicio { v.inicio } else { v.fin });
-                }
+                barra = Some(barra_reproduccion(ui, dur, pos, v.arrastre == Some(Arrastre::Cabezal)));
             });
-            if let Some(t) = buscar {
-                r.buscar(t);
+            if alternar {
+                v.alternar();
+            }
+            if let Some((resp, t)) = barra {
+                if resp.drag_started() {
+                    v.empezar_arrastre(Arrastre::Cabezal);
+                }
+                if let Some(t) = t.filter(|_| resp.dragged() || resp.clicked()) {
+                    v.buscar_arrastrando(t);
+                }
+                if resp.drag_stopped() {
+                    v.terminar_arrastre();
+                }
             }
         }
         ui.add_space(14.0);
@@ -427,10 +634,14 @@ impl App {
         let pos = v.reproductor.as_ref().map(|r| r.posicion()).unwrap_or(0.0);
         let ocupado = v.ocupado();
         tarjeta(ui, "Recorte", |ui| {
-            let titulo = format!("{} → {}  ·  dura {}", tiempo_fino(v.inicio), tiempo_fino(v.fin), tiempo_fino(v.fin - v.inicio));
-            let desc = "Arrastra las marcas blancas de la barra, o lleva el video a donde quieras cortar y usa los botones. \
-                        El video no se vuelve a comprimir (se guarda al instante, sin perder calidad), así que empieza en el \
-                        cuadro clave anterior al inicio: como mucho 1 s antes.";
+            ui.add_space(10.0);
+            ui.add_enabled_ui(!ocupado, |ui| v.barra_recorte(ui));
+            ui.add_space(4.0);
+            separador(ui);
+            let titulo = format!("El clip nuevo dura {}", tiempo_fino(v.fin - v.inicio));
+            let desc = "Arrastra las manijas azules (o la parte elegida entera), o lleva el video a donde quieras cortar y usa \
+                        los botones. El video no se vuelve a comprimir (se guarda al instante, sin perder calidad), así que \
+                        empieza en el cuadro clave anterior al inicio: como mucho 1 s antes.";
             fila(ui, &titulo, Some(desc), |ui| {
                 if boton(ui, None, "Todo", Estilo::Texto, !ocupado).clicked() {
                     v.inicio = 0.0;
@@ -557,12 +768,13 @@ fn panel_ver(ui: &mut Ui, v: &Visor) {
     nota(ui, "Espacio: reproducir o pausar · ← →: 5 segundos · Esc: volver a la biblioteca. En «Editar» puedes recortarlo y cambiar el volumen de cada pista.");
 }
 
-/// La barra de tiempo. Clic o arrastre: buscar. En el editor, las dos marcas del recorte se arrastran.
-/// Devuelve (a dónde buscar, qué marca se movió y a qué instante).
-fn linea_de_tiempo(ui: &mut Ui, dur: f64, pos: f64, recorte: Option<(f64, f64)>, arrastrando: &mut Option<Asa>) -> (Option<f64>, Option<(Asa, f64)>) {
+/// La barra de reproducción: clic o arrastre para ir a otro momento (mientras se arrastra, el video queda en
+/// pausa). Devuelve la respuesta y el instante bajo el puntero, si se está usando.
+fn barra_reproduccion(ui: &mut Ui, dur: f64, pos: f64, arrastrando: bool) -> (egui::Response, Option<f64>) {
     let ancho = ui.available_width().max(120.0);
-    let (rect, resp) = ui.allocate_exact_size(vec2(ancho, 26.0), Sense::click_and_drag());
-    let barra = Rect::from_center_size(rect.center(), vec2(rect.width() - 12.0, 6.0));
+    let (rect, resp) = ui.allocate_exact_size(vec2(ancho, 24.0), Sense::click_and_drag());
+    let activa = arrastrando || resp.hovered();
+    let barra = Rect::from_center_size(rect.center(), vec2(rect.width() - 16.0, if activa { 6.0 } else { 4.0 }));
     let x_de = |t: f64| barra.left() + (t / dur.max(0.001)).clamp(0.0, 1.0) as f32 * barra.width();
     let t_de = |x: f32| (((x - barra.left()) / barra.width()).clamp(0.0, 1.0) as f64) * dur;
     let p = ui.painter();
@@ -570,44 +782,11 @@ fn linea_de_tiempo(ui: &mut Ui, dur: f64, pos: f64, recorte: Option<(f64, f64)>,
     let mut jugado = barra;
     jugado.set_right(x_de(pos));
     p.rect_filled(jugado, 3.0, ACENTO);
-    if let Some((a, b)) = recorte {
-        // Fuera del recorte, más oscuro; las marcas, blancas.
-        let sombra = Color32::from_black_alpha(150);
-        p.rect_filled(Rect::from_min_max(pos2(barra.left(), rect.top() + 4.0), pos2(x_de(a), rect.bottom() - 4.0)), 2.0, sombra);
-        p.rect_filled(Rect::from_min_max(pos2(x_de(b), rect.top() + 4.0), pos2(barra.right(), rect.bottom() - 4.0)), 2.0, sombra);
-        for x in [x_de(a), x_de(b)] {
-            p.rect_filled(Rect::from_center_size(pos2(x, rect.center().y), vec2(6.0, 24.0)), 2.0, Color32::WHITE);
-        }
-        p.line_segment([pos2(x_de(a), rect.center().y), pos2(x_de(b), rect.center().y)], Stroke::new(2.0_f32, AMARILLO));
-    }
-    p.circle_filled(pos2(x_de(pos), rect.center().y), 7.0, Color32::WHITE);
-
-    let mut buscar = None;
-    let mut asa = None;
-    if let Some(puntero) = resp.interact_pointer_pos() {
-        if resp.drag_started() || resp.clicked() {
-            *arrastrando = recorte.and_then(|(a, b)| {
-                let (da, db) = ((puntero.x - x_de(a)).abs(), (puntero.x - x_de(b)).abs());
-                if da.min(db) > 10.0 {
-                    None
-                } else if da <= db {
-                    Some(Asa::Inicio)
-                } else {
-                    Some(Asa::Fin)
-                }
-            });
-        }
-        match *arrastrando {
-            Some(a) => asa = Some((a, t_de(puntero.x))),
-            None if resp.dragged() || resp.clicked() => buscar = Some(t_de(puntero.x)),
-            None => {}
-        }
-    }
-    if resp.drag_stopped() || resp.clicked() {
-        *arrastrando = None;
-    }
+    p.circle_filled(pos2(x_de(pos), rect.center().y), if activa { 8.0 } else { 6.0 }, Color32::WHITE);
+    let resp = resp.on_hover_cursor(CursorIcon::PointingHand);
     if let Some(h) = resp.hover_pos() {
         resp.clone().on_hover_text_at_pointer(tiempo_fino(t_de(h.x)));
     }
-    (buscar, asa)
+    let t = resp.interact_pointer_pos().map(|p| t_de(p.x));
+    (resp, t)
 }

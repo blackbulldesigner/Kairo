@@ -90,4 +90,7 @@ Ver `README.md` para el plan por fases.
   `KAIRO_CAPTURA_VERSION=0.9.0` hace que `--captura-ui` muestre el aviso de una versión nueva.
 - `--prueba-medios <clip>` reproduce, busca, recorta y comprime ese clip y revisa cada resultado (borrar después
   el clip, el "(editado)" y el "(comprimido)"). `KAIRO_CAPTURA_CLIP=<mp4>` + `KAIRO_CAPTURA_MODO=ver|editar|comprimir`
-  con `--captura-ui biblioteca` saca el visor con ese clip.
+  con `--captura-ui biblioteca` saca el visor con ese clip (`KAIRO_CAPTURA_RECORTE=2,6` pone un recorte).
+  `--prueba-medios` también manda 100 búsquedas seguidas sonando: tiene que quedar en la última.
+- `--prueba-tira <mp4> <png> <y> <alto> <n>` apila una franja de `n` cuadros del clip: sirve para ver un video que
+  manda la persona (por ejemplo, cómo se mueve una barra) sin abrirlo entero. Borrar la imagen después.
