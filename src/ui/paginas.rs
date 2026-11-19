@@ -134,8 +134,9 @@ impl App {
             let segundos = self.cfg.segundos.min(maximo);
             let largo = self.cfg.segundos_largo.min(maximo);
             let atajo_largo = self.cfg.atajo(CualAtajo::GuardarLargo).map(|a| a.texto());
-            // La RAM la marca el más largo de los dos (si el clip largo tiene atajo).
-            let en_ram = if atajo_largo.is_some() { segundos.max(largo) } else { segundos };
+            let largo_activo = self.cfg.clip_largo();
+            // La RAM la marca el más largo de los dos (si el clip largo está prendido).
+            let en_ram = if largo_activo { segundos.max(largo) } else { segundos };
             let usa = config::texto_bytes(por_segundo * en_ram as u64);
             let atajo = self.cfg.atajo(CualAtajo::Guardar).map(|a| a.texto()).unwrap_or_else(|| "el atajo".into());
             let desc = format!("Lo que se guarda al apretar {atajo}. Kairo usa unos {usa} de RAM.");
@@ -147,15 +148,25 @@ impl App {
                 }
             });
             separador(ui);
-            let desc = match &atajo_largo {
-                Some(a) => format!("Con {a} guardas un clip más largo, por si la jugada empezó antes."),
-                None => "Dale un atajo a «Guardar clip largo» en Atajos para usarlo. Sin atajo, no usa RAM de más.".to_string(),
+            let desc = match (largo_activo, &atajo_largo) {
+                (false, _) => "Apagado no usa nada: ni RAM de más ni su atajo. Prendido, guarda un clip más largo con su propio atajo, \
+                               por si la jugada empezó antes."
+                    .to_string(),
+                (true, Some(a)) => format!("Con {a} guardas un clip más largo. Usa más RAM mientras está prendido."),
+                (true, None) => "Ponle un atajo en Atajos → «Guardar clip largo» para usarlo.".to_string(),
             };
             fila(ui, "Clip largo", Some(&desc), |ui| {
-                valor(ui, &config::texto_duracion(largo), 72.0, atajo_largo.is_some());
-                let mut s = largo as f32;
-                if deslizador(ui, &mut s, config::SEGUNDOS_MIN as f32..=maximo as f32, 5.0, 190.0, true) {
-                    self.cfg.segundos_largo = s as u32;
+                let mut activo = largo_activo;
+                if interruptor(ui, &mut activo, true) {
+                    self.cfg.clip_largo_activo = Some(activo);
+                }
+                if largo_activo {
+                    ui.add_space(14.0);
+                    valor(ui, &config::texto_duracion(largo), 60.0, true);
+                    let mut s = largo as f32;
+                    if deslizador(ui, &mut s, config::SEGUNDOS_MIN as f32..=maximo as f32, 5.0, 160.0, true) {
+                        self.cfg.segundos_largo = s as u32;
+                    }
                 }
             });
             separador(ui);
@@ -656,16 +667,23 @@ impl App {
                     separador(ui);
                 }
                 let capturando = self.capturando == Some(cual);
-                let mut clic = false;
+                let (mut clic, mut quitar) = (false, false);
                 fila(ui, cual.titulo(), cual.descripcion(), |ui| {
+                    // La X quita el atajo (queda sin asignar). Se dibuja primero porque la fila va de derecha a izquierda.
+                    if self.cfg.atajo(cual).is_some() && !capturando {
+                        quitar = boton_icono(ui, icono::CERRAR, "Quitar este atajo").clicked();
+                        ui.add_space(4.0);
+                    }
                     clic = atajo(ui, self.cfg.atajo(cual), capturando).clicked();
                 });
-                if clic {
+                if quitar {
+                    *self.cfg.atajo_mut(cual) = None;
+                } else if clic {
                     self.capturando = if capturando { None } else { Some(cual) };
                 }
             }
         });
-        nota(ui, "Haz clic en un atajo y aprieta la tecla nueva. Esc cancela; Retroceso lo deja sin asignar.");
+        nota(ui, "Haz clic en un atajo y aprieta la tecla nueva (Esc cancela). La X lo quita.");
     }
 
     pub(super) fn pagina_sistema(&mut self, ui: &mut Ui, eq: Option<&Equipo>) {

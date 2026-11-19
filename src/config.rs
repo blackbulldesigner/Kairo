@@ -438,6 +438,9 @@ pub struct Config {
     pub pistas_separadas: bool,
     pub atajo_guardar: Option<Atajo>,
     pub atajo_guardar_largo: Option<Atajo>,
+    /// El clip largo prendido. Apagado no usa nada de más (ni RAM ni el atajo). None = config de antes de la
+    /// 0.9.1: se prende si ya tenía atajo.
+    pub clip_largo_activo: Option<bool>,
     /// Duración del clip largo (segundo atajo).
     pub segundos_largo: u32,
     pub atajo_pausa: Option<Atajo>,
@@ -473,6 +476,7 @@ impl Default for Config {
             pistas_separadas: false,
             atajo_guardar: Some(Atajo::tecla_sola("F9")),
             atajo_guardar_largo: None,
+            clip_largo_activo: Some(false),
             segundos_largo: 120,
             atajo_pausa: None,
             atajo_carpeta: None,
@@ -505,6 +509,9 @@ impl Config {
     fn normalizar(&mut self) {
         self.segundos = (self.segundos.clamp(SEGUNDOS_MIN, SEGUNDOS_MAX) / 5) * 5;
         self.segundos_largo = (self.segundos_largo.clamp(SEGUNDOS_MIN, SEGUNDOS_MAX) / 5) * 5;
+        if self.clip_largo_activo.is_none() {
+            self.clip_largo_activo = Some(self.atajo_guardar_largo.is_some());
+        }
         if self.fps != 30 {
             self.fps = 60;
         }
@@ -549,9 +556,14 @@ impl Config {
         kbps * 1000 / 8
     }
 
+    /// ¿Está prendido el clip largo?
+    pub fn clip_largo(&self) -> bool {
+        self.clip_largo_activo == Some(true)
+    }
+
     /// Cuántos segundos guarda el buffer en RAM: los del clip, o los del clip largo si tiene atajo y es más largo.
     pub fn segundos_en_ram(&self) -> u32 {
-        if self.atajo_guardar_largo.is_some() {
+        if self.clip_largo() {
             self.segundos.max(self.segundos_largo)
         } else {
             self.segundos

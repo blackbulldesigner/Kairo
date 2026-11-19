@@ -209,6 +209,10 @@ impl Bandeja {
         }
         let mut ocupados = Vec::new();
         for c in CualAtajo::TODOS {
+            // Con el clip largo apagado, su atajo no se toma (queda libre para otros programas).
+            if c == CualAtajo::GuardarLargo && !self.cfg.clip_largo() {
+                continue;
+            }
             let Some(a) = self.cfg.atajo(c) else { continue };
             let Some(vk) = a.tecla_virtual() else {
                 ocupados.push(a.texto());
@@ -491,7 +495,11 @@ unsafe fn accion(hwnd: HWND, id: usize) {
 
 unsafe fn mostrar_menu(hwnd: HWND) {
     let Some((pausado, atajo, largo)) = con_app(|b| {
-        let largo = b.cfg.atajo(CualAtajo::GuardarLargo).map(|a| (a.texto(), crate::config::texto_duracion(b.cfg.segundos_largo)));
+        let largo = b
+            .cfg
+            .atajo(CualAtajo::GuardarLargo)
+            .filter(|_| b.cfg.clip_largo())
+            .map(|a| (a.texto(), crate::config::texto_duracion(b.cfg.segundos_largo)));
         (b.pausado, b.texto_atajo_guardar(), largo)
     }) else {
         return;

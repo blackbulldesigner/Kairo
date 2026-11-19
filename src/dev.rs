@@ -438,6 +438,7 @@ fn prueba_grabar(segundos: u32, ruta: &str, o: Opciones) -> Result<()> {
         cfg.segundos = 5;
         cfg.segundos_largo = segundos;
         cfg.atajo_guardar_largo = Some(crate::config::Atajo::tecla_sola("F10"));
+        cfg.clip_largo_activo = Some(true);
     }
     if juego {
         // Este proceso es "el juego": el tono sale de acá.
