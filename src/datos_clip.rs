@@ -22,6 +22,9 @@ pub struct DatosClip {
     pub fps: u32,
     /// "2026-11-18 21-30-05".
     pub creado: String,
+    /// La mezcla ya está marcada como la pista que tocan los reproductores (ver `pistas_mp4`). Los clips de
+    /// antes de la 0.7.2 no la tienen: la biblioteca los repara.
+    pub mezcla_marcada: bool,
 }
 
 pub fn ruta_datos(clip: &Path) -> PathBuf {
@@ -33,7 +36,14 @@ pub fn ruta_datos(clip: &Path) -> PathBuf {
 pub fn escribir(clip: &Path, datos: &DatosClip) {
     let ruta = ruta_datos(clip);
     if let Ok(json) = serde_json::to_string_pretty(datos) {
-        if std::fs::write(&ruta, json).is_ok() {
+        // Si ya existe está oculto: Windows no deja reemplazar un archivo oculto "creándolo" de nuevo, pero sí
+        // vaciarlo y escribirlo.
+        let escrito = if ruta.exists() {
+            std::fs::OpenOptions::new().write(true).truncate(true).open(&ruta).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+        } else {
+            std::fs::write(&ruta, json)
+        };
+        if escrito.is_ok() {
             // Oculto: en la carpeta de clips solo se ven los videos.
             unsafe {
                 let _ = SetFileAttributesW(&HSTRING::from(ruta.as_os_str()), FILE_ATTRIBUTE_HIDDEN);

@@ -24,6 +24,7 @@ mod grabadora;
 mod icono;
 mod instalacion;
 mod medios;
+mod pistas_mp4;
 mod red;
 mod registro;
 mod ui;

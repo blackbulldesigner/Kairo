@@ -196,8 +196,8 @@ pub fn escribir(ruta: &Path, clip: &Clip, audio: &AudioDelClip) -> Result<Vec<St
         let flujo_video = escritor.AddStream(&tipo_video)?;
         escritor.SetInputMediaType(flujo_video, &tipo_video, None)?;
 
-        // El MP4 queda con las pistas en el orden inverso al que se agregan (comprobado). Los reproductores
-        // tocan la primera pista de audio, que tiene que ser la mezcla: por eso se agregan al revés.
+        // Windows enumera las pistas del MP4 al revés y toca la primera que enumera: la mezcla se agrega última.
+        // Para los demás reproductores (VLC, celulares…), después se marca como la única habilitada (pistas_mp4).
         let mut pistas = Vec::with_capacity(pcm_pistas.len());
         for pcm in pcm_pistas.into_iter().rev() {
             pistas.push(PistaDeAudio { flujo: agregar_pista_aac(&escritor, audio.bytes_por_segundo)?, pcm, escrito: 0 });
@@ -219,6 +219,9 @@ pub fn escribir(ruta: &Path, clip: &Clip, audio: &AudioDelClip) -> Result<Vec<St
             pista.escribir_hasta(&escritor, clip.fin - clip.inicio)?;
         }
         escritor.Finalize().context("no se pudo terminar el archivo")?;
+    }
+    if let Err(e) = crate::pistas_mp4::marcar_mezcla(ruta) {
+        crate::registro::log(&format!("no se pudo marcar la mezcla en el MP4: {e:#}"));
     }
     Ok(nombres)
 }

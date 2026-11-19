@@ -145,6 +145,7 @@ impl Guardador {
                 alto: clip.formato.alto,
                 fps: clip.formato.fps,
                 creado: crate::registro::fecha_para_archivo(),
+                mezcla_marcada: true,
             },
         );
         let trozos: Vec<String> = clip

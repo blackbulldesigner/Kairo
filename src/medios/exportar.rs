@@ -274,6 +274,9 @@ unsafe fn exportar_en(p: &Pedido, tmp: &std::path::Path, progreso: &dyn Fn(f32),
     }
     escribir_audio_hasta(&escritor, &mut pistas, &mut fuentes, &mut audio_hecho, total_audio)?;
     escritor.Finalize().context("no se pudo terminar el archivo")?;
+    if let Err(e) = crate::pistas_mp4::marcar_mezcla(tmp) {
+        crate::registro::log(&format!("no se pudo marcar la mezcla en el MP4: {e:#}"));
+    }
     progreso(1.0);
 
     // Los datos del clip nuevo (juego y nombres de las pistas), como los de la grabadora.
@@ -288,6 +291,7 @@ unsafe fn exportar_en(p: &Pedido, tmp: &std::path::Path, progreso: &dyn Fn(f32),
         alto: info.alto,
         fps: info.fps.round() as u32,
         creado: crate::registro::fecha_para_archivo(),
+        mezcla_marcada: true,
     };
     crate::datos_clip::escribir(&p.destino, &datos);
     Ok(Resultado { inicio_real: t0 as f64 / SEGUNDO as f64, duracion })

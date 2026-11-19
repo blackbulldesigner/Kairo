@@ -57,6 +57,7 @@ Ver `README.md` para el plan por fases.
 - `src/ui/`: ventana de Kairo (`app.rs` arma la ventana, `paginas.rs` las páginas de ajustes,
   `biblioteca.rs` + `pagina_biblioteca.rs` la biblioteca de clips y sus miniaturas).
 - `src/datos_clip.rs`: datos de cada clip (`clip.mp4.kairo`, oculto): juego, nombres de las pistas, formato.
+- `src/pistas_mp4.rs`: marca la mezcla como la pista de audio que tocan todos los reproductores.
 - `src/medios/` (solo la ventana, nunca la grabadora): `reproductor.rs` (hilo de video que achica a 1280×720 y
   hilo de audio con WASAPI que mezcla las pistas con su volumen y lleva el reloj), `exportar.rs` (recorte sin
   recodificar el video, audio rearmado por pista) y `comprimir.rs` (recodificar con el sink writer). La interfaz
@@ -80,8 +81,12 @@ Ver `README.md` para el plan por fases.
   muestra con "Solo el juego" puesto y `audio-programas` con "Solo los programas que elijas" y
   `grabacion-avanzado` con las opciones avanzadas abiertas (sin guardarlo).
   `biblioteca` espera a que estén las miniaturas (como mucho ~10 s).
-- El sink writer de MP4 deja las pistas en orden inverso al que se agregan: la mezcla se agrega última para
-  quedar primera (es la que tocan los reproductores).
+- Pistas de audio del MP4: Media Foundation (Windows y Kairo) las enumera al revés del archivo y toca la que
+  enumera primera, así que la mezcla se agrega última. VLC, navegadores y celulares tocan la primera del archivo
+  o la habilitada: por eso `pistas_mp4::marcar_mezcla` deja todas en el grupo alternativo 1 y solo la mezcla
+  habilitada (la biblioteca repara los clips viejos). `--marcar-mezcla <mp4>` lo hace a mano. Para ver qué toca
+  VLC: `vlc -I dummy --sout=#transcode{vcodec=none,acodec=s16l}:std{access=file,mux=wav,dst=x.wav} <mp4>
+  vlc://quit` y medir el WAV.
 - Para hablarle a la grabadora desde PowerShell con `FindWindow`, pasar `[NullString]::Value` como título:
   `$null` se convierte en texto vacío y no la encuentra.
 - Mientras alguien prueba el exe de `target\release`, compilar solo en debug (o `cargo check --release`).

@@ -25,6 +25,8 @@ pub struct Clip {
     pub tamano: u64,
     pub modificado: SystemTime,
     pub duracion: Option<f64>,
+    /// Clip de Kairo de antes de la 0.7.2 con pistas separadas: hay que marcar la mezcla (ver `pistas_mp4`).
+    reparar: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,6 +61,8 @@ pub struct Biblioteca {
     /// Clip que se está renombrando (con el nombre nuevo) o por mandar a la Papelera.
     pub renombrando: Option<(PathBuf, String)>,
     pub borrando: Option<PathBuf>,
+    /// Clips que ya se mandaron a reparar en esta sesión.
+    reparados: HashSet<PathBuf>,
 }
 
 impl Biblioteca {
@@ -79,6 +83,7 @@ impl Biblioteca {
             orden: Orden::Nuevos,
             renombrando: None,
             borrando: None,
+            reparados: HashSet::new(),
         }
     }
 
@@ -119,6 +124,13 @@ impl Biblioteca {
         }
         let rutas: HashSet<&PathBuf> = clips.iter().map(|c| &c.ruta).collect();
         self.miniaturas.retain(|r, _| rutas.contains(r));
+        // Los clips viejos con pistas separadas: la mezcla se marca para que VLC y los celulares la toquen (en
+        // otro hilo; son unos bytes por archivo).
+        let reparados = &mut self.reparados;
+        let pendientes: Vec<PathBuf> = clips.iter().filter(|c| c.reparar && reparados.insert(c.ruta.clone())).map(|c| c.ruta.clone()).collect();
+        if !pendientes.is_empty() {
+            std::thread::spawn(move || reparar_mezcla(&pendientes));
+        }
         self.clips = clips;
     }
 
@@ -228,9 +240,27 @@ fn buscar_clips(raiz: &Path, dir: &Path, nivel: u32, salida: &mut Vec<Clip>) {
             juego,
             tamano: meta.len(),
             modificado: meta.modified().unwrap_or(UNIX_EPOCH),
+            reparar: datos.as_ref().is_some_and(|d| d.pistas.len() > 1 && !d.mezcla_marcada),
             duracion: datos.map(|d| d.duracion).filter(|d| *d > 0.0),
             ruta,
         });
+    }
+}
+
+/// Marca la mezcla en clips de antes de la 0.7.2 y lo anota en sus datos. Si el clip está abierto en otro
+/// programa no se puede: se vuelve a intentar la próxima vez que se abra Kairo.
+fn reparar_mezcla(rutas: &[PathBuf]) {
+    for ruta in rutas {
+        match crate::pistas_mp4::marcar_mezcla(ruta) {
+            Ok(_) => {
+                if let Some(mut d) = datos_clip::leer(ruta) {
+                    d.mezcla_marcada = true;
+                    datos_clip::escribir(ruta, &d);
+                }
+                crate::registro::log(&format!("mezcla marcada en {}", ruta.display()));
+            }
+            Err(e) => crate::registro::log(&format!("no se pudo marcar la mezcla en {}: {e:#}", ruta.display())),
+        }
     }
 }
 

@@ -122,6 +122,7 @@ pub fn comprimir(p: &Pedido, progreso: &dyn Fn(f32), cancelar: &AtomicBool) -> R
                 alto: info.alto,
                 fps: info.fps.round() as u32,
                 creado: crate::registro::fecha_para_archivo(),
+                mezcla_marcada: true,
             };
             crate::datos_clip::escribir(&p.destino, &datos);
             Ok(())

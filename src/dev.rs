@@ -64,6 +64,10 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
         let n = |i: usize| args.get(k + i).and_then(|s| s.parse::<usize>().ok());
         return Some(informar(prueba_tira(args.get(k + 1)?, args.get(k + 2)?, n(3)?, n(4)?, n(5)?)));
     }
+    if let Some(k) = pos("--marcar-mezcla") {
+        let r = crate::pistas_mp4::marcar_mezcla(Path::new(args.get(k + 1)?)).map(|c| println!("¿cambió algo? {c}"));
+        return Some(informar(r));
+    }
     if let Some(k) = pos("--prueba-medios") {
         return Some(informar(prueba_medios(args.get(k + 1)?)));
     }
@@ -461,7 +465,9 @@ fn prueba_leer(ruta: &str, png: Option<&str>) -> Result<()> {
                     t.GetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND).unwrap_or(0) * 8 / 1000
                 )
             };
-            println!("pista {i}: {mayor} {sub} {extra}");
+            // La que Windows elige por defecto es la que tocan sus reproductores.
+            let defecto = if lector.GetStreamSelection(i).map(|b| b.as_bool()).unwrap_or(false) { " · elegida por defecto" } else { "" };
+            println!("pista {i}: {mayor} {sub} {extra}{defecto}");
             if mayor == "audio" {
                 pistas_audio.push(i);
             }
