@@ -1,6 +1,6 @@
 [package]
 name = "kairo"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Grabador de clips instantáneos para Windows, ligero y pensado para no bajar los FPS"
