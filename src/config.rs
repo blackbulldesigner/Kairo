@@ -339,16 +339,19 @@ fn nombre_tecla(t: &str) -> String {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CualAtajo {
     Guardar,
+    /// Un clip más largo (la duración de "Clip largo" en Grabación).
+    GuardarLargo,
     Pausa,
     Carpeta,
 }
 
 impl CualAtajo {
-    pub const TODOS: [CualAtajo; 3] = [CualAtajo::Guardar, CualAtajo::Pausa, CualAtajo::Carpeta];
+    pub const TODOS: [CualAtajo; 4] = [CualAtajo::Guardar, CualAtajo::GuardarLargo, CualAtajo::Pausa, CualAtajo::Carpeta];
 
     pub fn titulo(self) -> &'static str {
         match self {
             CualAtajo::Guardar => "Guardar clip",
+            CualAtajo::GuardarLargo => "Guardar clip largo",
             CualAtajo::Pausa => "Pausar o reanudar la grabación",
             CualAtajo::Carpeta => "Abrir la carpeta de clips",
         }
@@ -357,6 +360,7 @@ impl CualAtajo {
     pub fn descripcion(self) -> Option<&'static str> {
         match self {
             CualAtajo::Guardar => Some("Guarda los últimos segundos como MP4."),
+            CualAtajo::GuardarLargo => Some("Guarda un clip más largo (la duración se elige en Grabación → Clip largo)."),
             CualAtajo::Pausa => Some("Mientras está en pausa no se usa nada de la tarjeta de video."),
             CualAtajo::Carpeta => None,
         }
@@ -391,6 +395,9 @@ pub struct Config {
     /// Además de la mezcla, cada fuente de audio en su propia pista (para editar).
     pub pistas_separadas: bool,
     pub atajo_guardar: Option<Atajo>,
+    pub atajo_guardar_largo: Option<Atajo>,
+    /// Duración del clip largo (segundo atajo).
+    pub segundos_largo: u32,
     pub atajo_pausa: Option<Atajo>,
     pub atajo_carpeta: Option<Atajo>,
     /// Buscar versiones nuevas en GitHub (una consulta chica por día).
@@ -422,6 +429,8 @@ impl Default for Config {
             carpeta_por_juego: true,
             pistas_separadas: false,
             atajo_guardar: Some(Atajo::tecla_sola("F9")),
+            atajo_guardar_largo: None,
+            segundos_largo: 120,
             atajo_pausa: None,
             atajo_carpeta: None,
             buscar_actualizaciones: true,
@@ -451,6 +460,7 @@ impl Config {
 
     fn normalizar(&mut self) {
         self.segundos = (self.segundos.clamp(SEGUNDOS_MIN, SEGUNDOS_MAX) / 5) * 5;
+        self.segundos_largo = (self.segundos_largo.clamp(SEGUNDOS_MIN, SEGUNDOS_MAX) / 5) * 5;
         if self.fps != 30 {
             self.fps = 60;
         }
@@ -494,9 +504,19 @@ impl Config {
         kbps * 1000 / 8
     }
 
+    /// Cuántos segundos guarda el buffer en RAM: los del clip, o los del clip largo si tiene atajo y es más largo.
+    pub fn segundos_en_ram(&self) -> u32 {
+        if self.atajo_guardar_largo.is_some() {
+            self.segundos.max(self.segundos_largo)
+        } else {
+            self.segundos
+        }
+    }
+
     pub fn atajo(&self, c: CualAtajo) -> Option<&Atajo> {
         match c {
             CualAtajo::Guardar => self.atajo_guardar.as_ref(),
+            CualAtajo::GuardarLargo => self.atajo_guardar_largo.as_ref(),
             CualAtajo::Pausa => self.atajo_pausa.as_ref(),
             CualAtajo::Carpeta => self.atajo_carpeta.as_ref(),
         }
@@ -505,6 +525,7 @@ impl Config {
     pub fn atajo_mut(&mut self, c: CualAtajo) -> &mut Option<Atajo> {
         match c {
             CualAtajo::Guardar => &mut self.atajo_guardar,
+            CualAtajo::GuardarLargo => &mut self.atajo_guardar_largo,
             CualAtajo::Pausa => &mut self.atajo_pausa,
             CualAtajo::Carpeta => &mut self.atajo_carpeta,
         }

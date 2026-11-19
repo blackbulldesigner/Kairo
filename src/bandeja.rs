@@ -41,6 +41,7 @@ const ID_CARPETA: usize = 3;
 const ID_AJUSTES: usize = 4;
 const ID_SALIR: usize = 5;
 const ID_ACTUALIZAR: usize = 6;
+const ID_GUARDAR_LARGO: usize = 7;
 const TEMPORIZADOR: usize = 1;
 
 static MSG_BARRA_DE_TAREAS: AtomicU32 = AtomicU32::new(0);
@@ -287,7 +288,8 @@ impl Bandeja {
         self.actualizar_estado();
     }
 
-    unsafe fn guardar_clip(&mut self) {
+    /// Guarda los últimos segundos (o los del clip largo, con `largo`).
+    unsafe fn guardar_clip(&mut self, largo: bool) {
         let Some(guardador) = self.grabadora.as_ref().map(|g| g.guardador()) else {
             sonido::error();
             return;
@@ -301,7 +303,7 @@ impl Bandeja {
             unsafe {
                 let _ = CoInitializeEx(None, COINIT_MULTITHREADED).ok();
             }
-            let r = guardador.guardar(&cfg);
+            let r = guardador.guardar(&cfg, if largo { cfg.segundos_largo } else { cfg.segundos });
             match &r {
                 Ok(_) if cfg.sonido_al_guardar => sonido::guardado(),
                 Ok(_) => {}
@@ -380,6 +382,7 @@ impl Bandeja {
 fn id_atajo(c: CualAtajo) -> i32 {
     match c {
         CualAtajo::Guardar => ID_GUARDAR as i32,
+        CualAtajo::GuardarLargo => ID_GUARDAR_LARGO as i32,
         CualAtajo::Pausa => ID_PAUSA as i32,
         CualAtajo::Carpeta => ID_CARPETA as i32,
     }
@@ -453,7 +456,10 @@ pub fn avisar(mensaje: u32, wparam: usize) {
 unsafe fn accion(hwnd: HWND, id: usize) {
     match id {
         ID_GUARDAR => {
-            con_app(|b| b.guardar_clip());
+            con_app(|b| b.guardar_clip(false));
+        }
+        ID_GUARDAR_LARGO => {
+            con_app(|b| b.guardar_clip(true));
         }
         ID_PAUSA => {
             con_app(|b| b.alternar_pausa());
@@ -471,12 +477,20 @@ unsafe fn accion(hwnd: HWND, id: usize) {
 }
 
 unsafe fn mostrar_menu(hwnd: HWND) {
-    let Some((pausado, atajo)) = con_app(|b| (b.pausado, b.texto_atajo_guardar())) else { return };
+    let Some((pausado, atajo, largo)) = con_app(|b| {
+        let largo = b.cfg.atajo(CualAtajo::GuardarLargo).map(|a| (a.texto(), crate::config::texto_duracion(b.cfg.segundos_largo)));
+        (b.pausado, b.texto_atajo_guardar(), largo)
+    }) else {
+        return;
+    };
     let Ok(menu) = CreatePopupMenu() else { return };
     let item = |id: usize, texto: &str| {
         let _ = AppendMenuW(menu, MF_STRING, id, &HSTRING::from(texto));
     };
     item(ID_GUARDAR, &format!("Guardar clip\t{atajo}"));
+    if let Some((tecla, duracion)) = largo {
+        item(ID_GUARDAR_LARGO, &format!("Guardar clip largo ({duracion})\t{tecla}"));
+    }
     item(ID_PAUSA, if pausado { "Reanudar la grabación" } else { "Pausar la grabación" });
     item(ID_CARPETA, "Abrir la carpeta de clips");
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());

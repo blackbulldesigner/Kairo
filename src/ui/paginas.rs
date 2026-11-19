@@ -122,13 +122,30 @@ impl App {
             let maximo = config::Config::segundos_maximos(ram, por_segundo);
             // Solo se muestra recortado: el ajuste cambia cuando lo tocas (abrir la ventana no deja cambios).
             let segundos = self.cfg.segundos.min(maximo);
-            let usa = config::texto_bytes(por_segundo * segundos as u64);
-            let desc = format!("Lo que se guarda al apretar el atajo. Usa unos {usa} de RAM.");
+            let largo = self.cfg.segundos_largo.min(maximo);
+            let atajo_largo = self.cfg.atajo(CualAtajo::GuardarLargo).map(|a| a.texto());
+            // La RAM la marca el más largo de los dos (si el clip largo tiene atajo).
+            let en_ram = if atajo_largo.is_some() { segundos.max(largo) } else { segundos };
+            let usa = config::texto_bytes(por_segundo * en_ram as u64);
+            let atajo = self.cfg.atajo(CualAtajo::Guardar).map(|a| a.texto()).unwrap_or_else(|| "el atajo".into());
+            let desc = format!("Lo que se guarda al apretar {atajo}. Kairo usa unos {usa} de RAM.");
             fila(ui, "Duración del clip", Some(&desc), |ui| {
                 valor(ui, &config::texto_duracion(segundos), 72.0, true);
                 let mut s = segundos as f32;
                 if deslizador(ui, &mut s, config::SEGUNDOS_MIN as f32..=maximo as f32, 5.0, 190.0, true) {
                     self.cfg.segundos = s as u32;
+                }
+            });
+            separador(ui);
+            let desc = match &atajo_largo {
+                Some(a) => format!("Con {a} guardas un clip más largo, por si la jugada empezó antes."),
+                None => "Dale un atajo a «Guardar clip largo» en Atajos para usarlo. Sin atajo, no usa RAM de más.".to_string(),
+            };
+            fila(ui, "Clip largo", Some(&desc), |ui| {
+                valor(ui, &config::texto_duracion(largo), 72.0, atajo_largo.is_some());
+                let mut s = largo as f32;
+                if deslizador(ui, &mut s, config::SEGUNDOS_MIN as f32..=maximo as f32, 5.0, 190.0, true) {
+                    self.cfg.segundos_largo = s as u32;
                 }
             });
             separador(ui);

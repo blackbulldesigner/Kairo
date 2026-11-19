@@ -62,7 +62,7 @@ pub struct Guardador {
 impl Grabadora {
     pub fn iniciar(cfg: &Config) -> Grabadora {
         let detener = Arc::new(AtomicBool::new(false));
-        let buffer = Arc::new(Mutex::new(Buffer::new(cfg.segundos, PISTA_PROGRAMAS + cfg.programas_audio.len())));
+        let buffer = Arc::new(Mutex::new(Buffer::new(cfg.segundos_en_ram(), PISTA_PROGRAMAS + cfg.programas_audio.len())));
         let info = Arc::new(Mutex::new(Info::default()));
         // pid del juego detectado (0 = ninguno): lo escribe el hilo de video y lo lee el de audio.
         let pid_juego = Arc::new(AtomicU32::new(0));
@@ -100,7 +100,7 @@ impl Guardador {
     /// Escribe los últimos segundos en la carpeta de clips. Con "Una carpeta por juego", cada juego va en
     /// la suya (Clips\Fortnite) y lo que no es de un juego en Clips\Escritorio. El nombre lleva el juego y
     /// la fecha: "Fortnite 2026-11-18 21-30-05.mp4". Devuelve la ruta del MP4.
-    pub fn guardar(&self, cfg: &Config) -> Result<PathBuf> {
+    pub fn guardar(&self, cfg: &Config, segundos: u32) -> Result<PathBuf> {
         let juego = self.info.lock().ok().and_then(|i| i.juego.clone()).map(|j| nombre_para_carpeta(&j));
         let fecha = crate::registro::fecha_para_archivo();
         let (carpeta, nombre) = match &juego {
@@ -109,7 +109,7 @@ impl Guardador {
             None if cfg.carpeta_por_juego => (cfg.carpeta.join(CARPETA_SIN_JUEGO), format!("{CARPETA_SIN_JUEGO} {fecha}.mp4")),
             None => (cfg.carpeta.clone(), format!("Kairo {fecha}.mp4")),
         };
-        self.guardar_en(cfg, &carpeta.join(nombre), cfg.segundos)
+        self.guardar_en(cfg, &carpeta.join(nombre), segundos)
     }
 
     pub fn guardar_en(&self, cfg: &Config, ruta: &std::path::Path, segundos: u32) -> Result<PathBuf> {

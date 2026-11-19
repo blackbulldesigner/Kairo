@@ -73,6 +73,7 @@ Ver `README.md` para el plan por fases.
   pistas separadas: el tono tiene que quedar en la pista del juego y no en la del sistema. `solo-juego` sin
   juego adelante tiene que dar un clip negro. `--prueba-juego <s>` muestra la detección y los programas abiertos.
   `programa` suma `kairo.exe` como programa elegido: el tono tiene que quedar en su pista y en la mezcla.
+  `largo` deja el clip normal en 5 s y el largo en lo pedido (el buffer tiene que guardar lo del largo).
   `mouse` graba con "Mostrar el mouse" (con `--prueba-tira` a la altura del puntero se ve si quedó dibujado).
   Ojo: `con.mp4` no sirve de nombre de prueba (CON es un nombre reservado de Windows).
   `avanzado` graba con opciones avanzadas raras (CBR, cuadro clave cada 2 s, perfil Básico, audio a 128 kbps):
