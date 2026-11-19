@@ -7,6 +7,8 @@
 //! - `--prueba-leer <archivo.mp4> [cuadro.png]`: abre el MP4 como lo haría un reproductor, cuenta cuadros,
 //!   mide cada pista de audio y guarda una imagen del cuadro del medio.
 //! - `--prueba-juego <segundos>`: muestra qué detecta como juego, dos veces por segundo.
+//! - `--prueba-instalar` / `--prueba-desinstalar` (con `KAIRO_PRUEBA_INSTALACION=<carpeta>`): instalan y
+//!   desinstalan dentro de esa carpeta y revisan que cada cosa quede (o se vaya) donde tiene que estar.
 
 use std::path::Path;
 use std::time::Duration;
@@ -44,7 +46,74 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     if let Some(k) = pos("--prueba-leer") {
         return Some(informar(prueba_leer(args.get(k + 1)?, args.get(k + 2).map(|s| s.as_str()))));
     }
+    if pos("--prueba-instalar").is_some() {
+        return Some(informar(prueba_instalar()));
+    }
+    if pos("--prueba-desinstalar").is_some() {
+        return Some(informar(prueba_desinstalar()));
+    }
     None
+}
+
+/// Las pruebas del instalador solo corren con `KAIRO_PRUEBA_INSTALACION` (todo queda en esa carpeta).
+fn destinos_de_prueba() -> Result<crate::instalacion::Destinos> {
+    let d = crate::instalacion::destinos();
+    if !d.prueba {
+        return Err(anyhow!("falta KAIRO_PRUEBA_INSTALACION=<carpeta>: sin eso instalaría en la PC de verdad"));
+    }
+    Ok(d)
+}
+
+fn prueba_instalar() -> Result<()> {
+    let d = destinos_de_prueba()?;
+    let op = crate::instalacion::Opciones { escritorio: true, inicio_windows: true };
+    let exe = crate::instalacion::instalar(&op, &|p| println!("paso: {p}"))?;
+    let revisar = |que: &str, ok: bool| -> Result<()> {
+        println!("{} {que}", if ok { "ok  " } else { "MAL " });
+        if ok { Ok(()) } else { Err(anyhow!("falta: {que}")) }
+    };
+    let propio = std::fs::metadata(std::env::current_exe()?)?.len();
+    revisar(&format!("exe copiado en {}", exe.display()), std::fs::metadata(&exe).is_ok_and(|m| m.len() == propio))?;
+    revisar("acceso del menú", d.acceso_menu.exists())?;
+    revisar("acceso del escritorio", d.acceso_escritorio.exists())?;
+    let version = crate::instalacion::version_instalada();
+    revisar(&format!("versión registrada ({version:?})"), version.as_deref() == Some(crate::version::VERSION))?;
+    Ok(())
+}
+
+fn prueba_desinstalar() -> Result<()> {
+    let d = destinos_de_prueba()?;
+    crate::instalacion::desinstalar(false)?;
+    crate::instalacion::borrar_carpeta_al_salir()?;
+    // Si este exe es el instalado, la carpeta recién se puede borrar cuando se cierre: eso se revisa afuera.
+    // (Con canonicalize, para comparar rutas aunque una venga con nombres cortos, como "BLACKB~1".)
+    let adentro = match (std::env::current_exe().and_then(std::fs::canonicalize), std::fs::canonicalize(&d.carpeta)) {
+        (Ok(e), Ok(c)) => e.starts_with(c),
+        _ => false,
+    };
+    if adentro {
+        println!("este exe está en la carpeta: se borra cuando se cierre");
+    }
+    // La carpeta la borra cmd un momento después.
+    for _ in 0..if adentro { 0 } else { 40 } {
+        if !d.carpeta.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    let mut mal = Vec::new();
+    for (que, queda) in [
+        ("carpeta del programa", !adentro && d.carpeta.exists()),
+        ("acceso del menú", d.acceso_menu.exists()),
+        ("acceso del escritorio", d.acceso_escritorio.exists()),
+        ("entrada en el registro", crate::instalacion::version_instalada().is_some()),
+    ] {
+        println!("{} {que} {}", if queda { "MAL " } else { "ok  " }, if queda { "sigue ahí" } else { "borrado" });
+        if queda {
+            mal.push(que);
+        }
+    }
+    if mal.is_empty() { Ok(()) } else { Err(anyhow!("quedaron cosas: {mal:?}")) }
 }
 
 fn informar(r: Result<()>) -> i32 {

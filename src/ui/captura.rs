@@ -1,5 +1,6 @@
 //! `--captura-ui <página> <archivo.png>` (solo con `--features dev`): abre la ventana en esa página,
 //! guarda una imagen y se cierra. Sirve para revisar la interfaz sin abrirla a mano.
+//! `--captura-instalador <archivo.png>` hace lo mismo con la ventana del instalador.
 
 use std::path::PathBuf;
 
@@ -35,6 +36,16 @@ pub fn desde_args(args: &[String]) -> Option<Pedido> {
         Some([w.parse().ok()?, h.parse().ok()?])
     });
     Some(Pedido { pagina, tamano, modo_juego, programas, ruta, cuadros: 0, pedida: false })
+}
+
+/// `--captura-instalador <archivo.png>`: la ventana del instalador (no instala nada).
+pub fn del_instalador(args: &[String]) -> Option<Pedido> {
+    if !cfg!(feature = "dev") {
+        return None;
+    }
+    let i = args.iter().position(|a| a == "--captura-instalador")?;
+    let ruta = PathBuf::from(args.get(i + 1)?);
+    Some(Pedido { pagina: Pagina::AcercaDe, tamano: None, modo_juego: false, programas: false, ruta, cuadros: 0, pedida: false })
 }
 
 impl Pedido {

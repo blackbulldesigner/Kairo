@@ -13,7 +13,14 @@ PCs de escritorio.
 
 ## Cómo se usa
 
-- Abre `kairo.exe`: aparece el ícono de Kairo junto al reloj y se abre la ventana de Kairo en la Biblioteca.
+- Instálalo con `KairoSetup-<versión>.exe`: se instala solo para tu usuario, sin pedir permisos de
+  administrador, en `%LOCALAPPDATA%\Programs\Kairo`, con acceso en el menú Inicio y (si quieres) en el
+  escritorio. Para actualizar, abre el instalador de la versión nueva: tus ajustes y tus clips se conservan.
+  Como el exe todavía no tiene firma digital, Windows puede avisar "Windows protegió su PC": *Más
+  información → Ejecutar de todas formas*.
+- Para desinstalar: Configuración → Aplicaciones → Kairo. Pregunta si borrar también tus ajustes; los clips
+  nunca se borran.
+- Abre Kairo: aparece el ícono de Kairo junto al reloj y se abre la ventana de Kairo en la Biblioteca.
 - **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto.
 - Clic derecho en el ícono: guardar, pausar, abrir la carpeta de clips, ajustes y salir.
 - En Sistema puedes activar **Iniciar con Windows**.
@@ -33,10 +40,15 @@ Sonido del sistema (WASAPI loopback) ─▶ PCM 48 kHz ─▶  buffer en RAM (ú
                                                   MP4 (video copiado tal cual + audio AAC)
 ```
 
-Un mismo exe tiene tres modos: sin argumentos es la grabadora en la bandeja (y abre los ajustes),
+Un mismo exe tiene varios modos: sin argumentos es la grabadora en la bandeja (y abre los ajustes),
 `--fondo` es la grabadora sin ventanas (inicio con Windows) y `--ajustes` es la ventana de ajustes, un
 proceso aparte que solo existe mientras está abierta. Se comunican con mensajes de Windows y con
 `%APPDATA%\Kairo\estado.json`.
+
+El instalador es ese mismo exe con otro nombre: si se llama `KairoSetup…` (o se abre con `--instalar`)
+muestra la ventana de instalación y se copia a sí mismo. `--instalar --sin-ventana` actualiza el Kairo
+instalado sin preguntar (conserva el acceso del escritorio y el inicio con Windows) y `--desinstalar` es
+el desinstalador.
 
 ## Principios
 
@@ -70,7 +82,8 @@ proceso aparte que solo existe mientras está abierta. Se comunican con mensajes
   mientras juegas.
 - [ ] **Fase 5: editor.** Reproductor dentro de Kairo, recorte y exportar sin recodificar, y quitar pistas
   (por ejemplo, Discord) usando los datos de cada clip.
-- [ ] **Fase 6: extras.** Actualizaciones verificadas, instalador y firma digital.
+- [ ] **Fase 6: extras.** ~~Instalador~~ (listo: `KairoSetup.exe`, sin permisos de administrador, con
+  desinstalador en "Aplicaciones instaladas"), actualizaciones verificadas y firma digital.
 
 **Cómo medimos "no afecta los FPS":** mismo juego, misma escena, laptop conectada al cargador y 3 corridas por
 caso: sin grabar, con Medal, con Kairo y con la grabadora de NVIDIA o AMD. Se anotan FPS promedio, "1 % low" y
@@ -85,6 +98,12 @@ cargo build --release
 ```
 
 El exe queda en `target\release\kairo.exe`.
+
+Para armar el instalador (compila y deja `dist\KairoSetup-<versión>.exe`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\instalador.ps1
+```
 
 Para desarrollo hay una opción que guarda una imagen de una página de los ajustes (sirve para revisar la
 interfaz sin abrirla a mano):
@@ -105,8 +124,19 @@ cargo run --features dev -- --prueba-leer prueba.mp4 cuadro.png
 La primera graba 6 segundos (con un tono a la mitad) y guarda el clip; la segunda lo abre como un reproductor,
 cuenta cuadros, mide el audio y guarda la imagen del cuadro del medio.
 
+El instalador se prueba en una carpeta aparte, sin tocar la PC (otra clave del registro, sin cerrar el Kairo
+abierto ni tocar el inicio con Windows):
+
+```powershell
+$env:KAIRO_PRUEBA_INSTALACION = "$env:TEMP\kairo-prueba"
+cargo run --features dev -- --prueba-instalar
+cargo run --features dev -- --prueba-desinstalar
+cargo run --features dev -- --captura-instalador instalador.png
+```
+
 ## Archivos del usuario
 
+- Programa (instalado): `%LOCALAPPDATA%\Programs\Kairo\Kairo.exe`
 - Ajustes: `%APPDATA%\Kairo\config.json`
 - Estado de la grabadora: `%APPDATA%\Kairo\estado.json`
 - Registro (para entender fallas): `%APPDATA%\Kairo\kairo.log`

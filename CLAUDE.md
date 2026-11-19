@@ -19,7 +19,8 @@ Ver `README.md` para el plan por fases.
 
 - La persona usa Kairo en esta PC. Después de cada cambio (con commit o sin él) hay que cerrarlo, compilar la
   versión final y volver a abrirlo: `powershell -ExecutionPolicy Bypass -File scripts\actualizar.ps1`.
-  Después, decirle qué versión quedó abierta (lo que muestra Acerca de).
+  Después, decirle qué versión quedó abierta (lo que muestra Acerca de). Si Kairo está instalado
+  (`%LOCALAPPDATA%\Programs\Kairo`), el script actualiza esa copia (`--instalar --sin-ventana`) y abre esa.
 
 ## Versiones y novedades
 
@@ -39,7 +40,10 @@ Ver `README.md` para el plan por fases.
 ## Código
 
 - Comentarios y nombres en español.
-- `src/main.rs`: modos del exe (sin argumentos = bandeja; `--fondo`; `--ajustes`).
+- `src/main.rs`: modos del exe (sin argumentos = bandeja; `--fondo`; `--ajustes`; el instalador si el exe se
+  llama `KairoSetup…` o con `--instalar`; `--desinstalar`).
+- `src/instalacion.rs` + `src/ui/instalador.rs`: instalar solo para el usuario (sin administrador), accesos,
+  entrada en "Aplicaciones instaladas" (HKCU) y desinstalar. `build.rs` pone el ícono y la versión en el exe.
 - `src/bandeja.rs`: grabadora en la bandeja (ícono, menú, atajos globales, mensajes `WM_APP+n` de los ajustes).
 - `src/grabadora/`: `captura.rs` (Desktop Duplication + NV12 en GPU), `encoder.rs` (H.264 por hardware,
   asíncrono), `audio.rs` (WASAPI loopback), `buffer.rs` (RAM), `mp4.rs` (sink writer), `mod.rs` (hilos).
@@ -68,3 +72,6 @@ Ver `README.md` para el plan por fases.
 - Para hablarle a la grabadora desde PowerShell con `FindWindow`, pasar `[NullString]::Value` como título:
   `$null` se convierte en texto vacío y no la encuentra.
 - Mientras alguien prueba el exe de `target\release`, compilar solo en debug (o `cargo check --release`).
+- El instalador se prueba con `KAIRO_PRUEBA_INSTALACION=<carpeta>` (todo queda ahí y usa otra clave del
+  registro): `--prueba-instalar`, `--prueba-desinstalar` y `--captura-instalador <png>`. Sin esa variable
+  instala en la PC de verdad: nunca probar así. Al terminar, borrar la carpeta de prueba.

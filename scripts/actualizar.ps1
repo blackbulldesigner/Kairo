@@ -1,4 +1,4 @@
-# Cierra Kairo, compila la versión final y la vuelve a abrir.
+# Cierra Kairo, compila la versión final y la vuelve a abrir (si está instalado, actualiza la copia instalada).
 # Uso: powershell -ExecutionPolicy Bypass -File scripts\actualizar.ps1 [-SinAbrir]
 param([switch]$SinAbrir)
 
@@ -40,8 +40,19 @@ try {
     Pop-Location
 }
 
-# 3. Abrir de nuevo (la grabadora en la bandeja, y se abren los ajustes).
+# 3. Si Kairo está instalado, se actualiza esa copia (la que abren el menú Inicio y el inicio con Windows).
+$compilado = Join-Path $raiz 'target\release\kairo.exe'
+$instalado = Join-Path $env:LOCALAPPDATA 'Programs\Kairo\Kairo.exe'
+$abrir = $compilado
+if (Test-Path $instalado) {
+    $p = Start-Process $compilado -ArgumentList '--instalar', '--sin-ventana' -Wait -PassThru
+    if ($p.ExitCode -ne 0) { throw "No se pudo actualizar el Kairo instalado (ver %APPDATA%\Kairo\kairo.log)." }
+    Write-Host "Kairo instalado actualizado: $instalado"
+    $abrir = $instalado
+}
+
+# 4. Abrir de nuevo (la grabadora en la bandeja, y se abren los ajustes).
 if (-not $SinAbrir) {
-    Start-Process (Join-Path $raiz 'target\release\kairo.exe')
+    Start-Process $abrir
     Write-Host "Kairo actualizado y abierto."
 }

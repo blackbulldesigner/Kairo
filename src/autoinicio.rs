@@ -8,9 +8,8 @@ use windows::Win32::System::Registry::{RegDeleteKeyValueW, RegGetValueW, RegSetK
 const CLAVE: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const NOMBRE: PCWSTR = w!("Kairo");
 
-fn linea_de_comandos() -> Option<String> {
-    let exe = std::env::current_exe().ok()?;
-    Some(format!("\"{}\" --fondo", exe.display()))
+fn linea_de_comandos(exe: &std::path::Path) -> String {
+    format!("\"{}\" --fondo", exe.display())
 }
 
 fn registrado() -> Option<String> {
@@ -33,9 +32,16 @@ pub fn activo() -> bool {
 }
 
 pub fn poner(si: bool) {
+    if let Ok(exe) = std::env::current_exe() {
+        poner_para(&exe, si);
+    }
+}
+
+/// Como `poner`, pero con el exe que se indica (el instalador registra el exe instalado, no el suyo).
+pub fn poner_para(exe: &std::path::Path, si: bool) {
     unsafe {
         if si {
-            let Some(linea) = linea_de_comandos() else { return };
+            let linea = linea_de_comandos(exe);
             let v: Vec<u16> = linea.encode_utf16().chain(std::iter::once(0)).collect();
             let _ = RegSetKeyValueW(HKEY_CURRENT_USER, CLAVE, NOMBRE, REG_SZ.0, Some(v.as_ptr() as *const _), (v.len() * 2) as u32);
         } else {

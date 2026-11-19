@@ -65,3 +65,8 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[build-dependencies]
+# Ícono e información de versión del exe (ver build.rs).
+png = "0.17"
+embed-resource = "2"
