@@ -88,6 +88,11 @@ pub struct App {
     pub(super) actualizador: super::actualizar::Actualizador,
     /// El clip abierto en la Biblioteca (reproductor, editor y compresor).
     pub(super) visor: Option<super::visor::Visor>,
+    /// Volumen del reproductor (0 a 1) y si está en silencio (se recuerdan en reproductor.json).
+    pub(super) volumen: f32,
+    pub(super) silencio: bool,
+    /// El video del visor ocupa toda la pantalla (sin barra de arriba ni de abajo).
+    pub(super) pantalla_completa: bool,
     /// Guardado → Limpieza: (carpeta y límites con que se calculó, hasta cuándo vale, resumen).
     pub(super) limpieza_resumen: Option<((std::path::PathBuf, crate::config::Limpieza), f64, super::paginas::ResumenLimpieza)>,
 }
@@ -158,6 +163,9 @@ impl App {
             ultimo_clip_visto: None,
             actualizador,
             visor,
+            volumen: super::visor::leer_volumen().0,
+            silencio: super::visor::leer_volumen().1,
+            pantalla_completa: false,
             limpieza_resumen: None,
         }
     }
@@ -457,15 +465,23 @@ impl eframe::App for App {
             self.biblioteca.actualizar(&carpeta, self.ahora, ctx);
         }
 
+        // Sin clip abierto no hay pantalla completa.
+        if self.pantalla_completa && (self.visor.is_none() || self.pagina != Pagina::Biblioteca) {
+            self.pantalla_completa = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
+        let completa = self.pantalla_completa;
+        if !completa {
         TopBottomPanel::top("barra")
             .exact_height(56.0)
             .frame(Frame::none().fill(PANEL).inner_margin(Margin::symmetric(18.0, 0.0)).stroke(egui::Stroke::new(1.0_f32, BORDE)))
             .show(ctx, |ui| self.barra_superior(ui));
 
         // La barra de guardar sube desde abajo cuando hay cambios (y baja al guardar o descartar).
+        }
         let t_guardar = animar::suave(ctx, egui::Id::new("barra_guardar"), (self.cfg != self.guardada) as u8 as f32, 0.22);
         let alto_guardar = 58.0 * t_guardar;
-        if alto_guardar > 0.5 {
+        if alto_guardar > 0.5 && !completa {
             TopBottomPanel::bottom("pie")
                 .exact_height(alto_guardar)
                 .frame(Frame::none().fill(PANEL).inner_margin(Margin::symmetric(20.0, 0.0)).stroke(egui::Stroke::new(1.0_f32, BORDE)))
@@ -485,12 +501,15 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
 
-        CentralPanel::default().frame(Frame::none().fill(FONDO).inner_margin(Margin { left: 28.0, right: 20.0, top: 0.0, bottom: 0.0 })).show(
+        let margen = if completa { Margin::same(0.0) } else { Margin { left: 28.0, right: 20.0, top: 0.0, bottom: 0.0 } };
+        CentralPanel::default().frame(Frame::none().fill(if completa { egui::Color32::BLACK } else { FONDO }).inner_margin(margen)).show(
             ctx,
             |ui| {
                 ui.set_opacity(entrada);
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    ui.add_space(22.0 + (1.0 - entrada) * 14.0);
+                    if !completa {
+                        ui.add_space(22.0 + (1.0 - entrada) * 14.0);
+                    }
                     // Columna de hasta 960 puntos, centrada si sobra lugar (ventana grande).
                     let ancho = ui.available_width();
                     // La biblioteca aprovecha más ancho (más columnas de clips).
@@ -499,7 +518,7 @@ impl eframe::App for App {
                         Pagina::Biblioteca => 1700.0,
                         _ => 900.0,
                     };
-                    let contenido = ancho.min(maximo);
+                    let contenido = if completa { ancho } else { ancho.min(maximo) };
                     let margen = ((ancho - contenido) / 2.0).floor().max(0.0);
                     ui.horizontal_top(|ui| {
                         ui.add_space(margen);

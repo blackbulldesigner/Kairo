@@ -48,6 +48,10 @@ pub mod icono {
     pub const QUITAR: &str = "\u{E74D}";
     pub const DESCARGAR: &str = "\u{E896}";
     pub const BUSCAR: &str = "\u{E721}";
+    pub const VOLUMEN: &str = "\u{E767}";
+    pub const SILENCIO: &str = "\u{E74F}";
+    pub const AGRANDAR: &str = "\u{E740}";
+    pub const ACHICAR: &str = "\u{E73F}";
     pub const REPRODUCIR: &str = "\u{E768}";
     pub const PAUSA: &str = "\u{E769}";
     pub const ATRAS: &str = "\u{E72B}";

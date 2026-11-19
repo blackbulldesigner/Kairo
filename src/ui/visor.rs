@@ -59,6 +59,10 @@ pub struct Visor {
     inicio: f64,
     fin: f64,
     arrastre: Option<Arrastre>,
+    /// Última vez que el mouse se movió sobre el video (los controles se esconden a los 2 s).
+    ultimo_movimiento: f64,
+    /// Destello del ícono al reproducir: (cuándo, si empezó a sonar).
+    destello: Option<(f64, bool)>,
     /// Estaba sonando cuando se empezó a arrastrar: al soltar, sigue.
     seguir_al_soltar: bool,
     /// La última búsqueda hecha mientras se arrastra (para no repetir la misma).
@@ -67,6 +71,22 @@ pub struct Visor {
     /// El último clip que se guardó o comprimió desde acá.
     hecho: Option<PathBuf>,
     opcion: Opcion,
+}
+
+fn ruta_volumen() -> std::path::PathBuf {
+    crate::config::datos_dir().join("reproductor.json")
+}
+
+/// El volumen del reproductor que quedó la última vez: (volumen, silencio).
+pub(super) fn leer_volumen() -> (f32, bool) {
+    let v: Option<serde_json::Value> = std::fs::read_to_string(ruta_volumen()).ok().and_then(|s| serde_json::from_str(&s).ok());
+    let volumen = v.as_ref().and_then(|v| v["volumen"].as_f64()).unwrap_or(0.8) as f32;
+    let silencio = v.as_ref().and_then(|v| v["silencio"].as_bool()).unwrap_or(false);
+    (volumen.clamp(0.0, 1.0), silencio)
+}
+
+fn guardar_volumen(volumen: f32, silencio: bool) {
+    let _ = std::fs::write(ruta_volumen(), format!("{{\"volumen\": {volumen:.2}, \"silencio\": {silencio}}}"));
 }
 
 /// "0:12"
@@ -113,6 +133,8 @@ impl Visor {
             inicio: 0.0,
             fin: duracion,
             arrastre: None,
+            ultimo_movimiento: 0.0,
+            destello: None,
             seguir_al_soltar: false,
             ultima_busqueda: -1.0,
             tarea: None,
@@ -417,6 +439,25 @@ impl Visor {
 }
 
 impl App {
+    /// Volumen del reproductor (0 a 1): se aplica en el próximo cuadro y se recuerda.
+    fn cambiar_volumen(&mut self, v: f32) {
+        self.volumen = v.clamp(0.0, 1.0);
+        guardar_volumen(self.volumen, self.silencio);
+    }
+
+    fn alternar_silencio(&mut self) {
+        self.silencio = !self.silencio;
+        if !self.silencio && self.volumen == 0.0 {
+            self.volumen = 0.5;
+        }
+        guardar_volumen(self.volumen, self.silencio);
+    }
+
+    pub(super) fn alternar_pantalla_completa(&mut self, ctx: &egui::Context) {
+        self.pantalla_completa = !self.pantalla_completa;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.pantalla_completa));
+    }
+
     pub(super) fn abrir_visor(&mut self, ctx: &egui::Context, ruta: &Path, modo: Modo) {
         self.visor = Some(Visor::abrir(ctx, ruta, modo));
     }
@@ -439,6 +480,25 @@ impl App {
                     i.consume_key(Modifiers::NONE, Key::Escape),
                 )
             });
+            let (arriba, abajo, m, f) = ctx.input_mut(|i| {
+                (
+                    i.consume_key(Modifiers::NONE, Key::ArrowUp),
+                    i.consume_key(Modifiers::NONE, Key::ArrowDown),
+                    i.consume_key(Modifiers::NONE, Key::M),
+                    i.consume_key(Modifiers::NONE, Key::F),
+                )
+            });
+            if arriba || abajo {
+                self.silencio = false;
+                self.cambiar_volumen(self.volumen + if arriba { 0.1 } else { -0.1 });
+            }
+            if m {
+                self.alternar_silencio();
+            }
+            if f || (esc && self.pantalla_completa) {
+                self.alternar_pantalla_completa(&ctx);
+            }
+            let esc = esc && !self.pantalla_completa && !f;
             if espacio {
                 v.alternar();
             }
@@ -474,7 +534,8 @@ impl App {
             }
         }
 
-        // Barra de arriba: volver, nombre y modo.
+        // Barra de arriba: volver, nombre y modo (en pantalla completa, solo el video).
+        if !self.pantalla_completa {
         ui.horizontal(|ui| {
             if boton(ui, Some(icono::ATRAS), "Biblioteca", Estilo::Texto, true).clicked() {
                 cerrar = true;
@@ -510,11 +571,12 @@ impl App {
         meta.push(texto_bytes(v.tamano));
         ui.label(RichText::new(meta.join(" · ")).size(12.5).color(SECUNDARIO));
         ui.add_space(10.0);
+        }
 
         if let Some(r) = &v.reproductor {
             // El cuadro nuevo (si toca) a la textura.
             if let Some(c) = r.tomar_cuadro() {
-                let img = egui::ColorImage::from_rgba_unmultiplied([c.ancho, c.alto], &c.rgba);
+                let img = c.imagen;
                 match &mut v.textura {
                     Some(t) => t.set(img, TextureOptions::LINEAR),
                     None => v.textura = Some(ctx.load_texture("visor", img, TextureOptions::LINEAR)),
@@ -525,25 +587,67 @@ impl App {
             }
         }
 
-        // El video, lo más grande que entre dejando lugar para los controles.
+        // El video, lo más grande que entre (en pantalla completa, todo). Los controles van encima, abajo.
+        let completa = self.pantalla_completa;
         let ancho = ui.available_width();
         let (w, h) = v.reproductor.as_ref().map(|r| (r.info.ancho as f32, r.info.alto as f32)).unwrap_or((16.0, 9.0));
-        // En Editar y Comprimir, más chico: abajo van las opciones y el botón.
-        let alto_max = (ctx.screen_rect().height() - if v.modo == Modo::Ver { 300.0 } else { 540.0 }).max(200.0);
-        let alto = (ancho * h / w.max(1.0)).min(alto_max);
+        let alto_max = if completa {
+            ui.available_height()
+        } else {
+            // En Editar y Comprimir, más chico: abajo van las opciones y el botón.
+            (ctx.screen_rect().height() - if v.modo == Modo::Ver { 230.0 } else { 520.0 }).max(200.0)
+        };
+        let alto = if completa { alto_max } else { (ancho * h / w.max(1.0)).min(alto_max) };
         let (caja, resp) = ui.allocate_exact_size(vec2(ancho, alto), Sense::click());
-        let p = ui.painter();
-        p.rect_filled(caja, 10.0, Color32::BLACK);
-        let ancho_video = (alto * w / h.max(1.0)).min(ancho);
-        let video = Rect::from_center_size(caja.center(), vec2(ancho_video, ancho_video * h / w.max(1.0)));
+        let p = ui.painter().clone();
+        p.rect_filled(caja, if completa { 0.0 } else { 12.0 }, Color32::BLACK);
+        let escala = (caja.width() / w.max(1.0)).min(caja.height() / h.max(1.0));
+        let video = Rect::from_center_size(caja.center(), vec2(w * escala, h * escala));
         if let Some(t) = &v.textura {
             p.image(t.id(), video, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        } else if v.reproductor.is_some() {
+            // Cargando: un arco que gira.
+            let t = ui.input(|i| i.time) as f32 * 5.0;
+            let puntos: Vec<egui::Pos2> = (0..=24).map(|k| {
+                let a = t + k as f32 / 24.0 * 4.2;
+                caja.center() + vec2(a.cos(), a.sin()) * 18.0
+            }).collect();
+            p.add(egui::Shape::line(puntos, Stroke::new(3.0_f32, ACENTO)));
+            ctx.request_repaint();
         }
         let sonando = v.reproductor.as_ref().is_some_and(|r| r.reproduciendo());
-        if !sonando && v.reproductor.is_some() {
-            // Botón grande de reproducir en el medio.
-            p.circle_filled(caja.center(), 30.0, Color32::from_black_alpha(150));
-            p.text(caja.center() + vec2(2.0, 0.0), Align2::CENTER_CENTER, icono::REPRODUCIR, FontId::new(24.0, iconos()), Color32::WHITE);
+
+        // ¿Se ven los controles? Siempre en pausa; sonando, mientras el mouse se mueve encima (y 2 s más).
+        let ahora = ui.input(|i| i.time);
+        let encima = ui.input(|i| i.pointer.hover_pos()).is_some_and(|q| caja.contains(q));
+        if encima && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
+            v.ultimo_movimiento = ahora;
+        }
+        let mostrar = !sonando || v.arrastre.is_some() || (encima && ahora - v.ultimo_movimiento < 2.0);
+        if sonando && encima && ahora - v.ultimo_movimiento < 2.0 {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
+        let vis = super::animar::suave(&ctx, egui::Id::new("visor_controles"), mostrar as u8 as f32, 0.2);
+        if !mostrar && encima && v.reproductor.is_some() {
+            ctx.set_cursor_icon(CursorIcon::None);
+        }
+
+        // En pausa, el botón grande de reproducir; al apretar, un destello del ícono que crece y se va.
+        let pausa = 1.0 - super::animar::hacia(&ctx, egui::Id::new("visor_sonando"), sonando);
+        if pausa > 0.0 && v.reproductor.is_some() && v.textura.is_some() {
+            p.circle_filled(caja.center(), 32.0, Color32::from_black_alpha((150.0 * pausa) as u8));
+            p.text(caja.center() + vec2(2.0, 0.0), Align2::CENTER_CENTER, icono::REPRODUCIR, FontId::new(26.0, iconos()), Color32::WHITE.gamma_multiply(pausa));
+        }
+        if let Some((desde, a_sonar)) = v.destello {
+            let t = ((ahora - desde) / 0.45) as f32;
+            if t >= 1.0 {
+                v.destello = None;
+            } else if a_sonar {
+                let r = 28.0 + 18.0 * t;
+                p.circle_filled(caja.center(), r, Color32::from_black_alpha((140.0 * (1.0 - t)) as u8));
+                p.text(caja.center() + vec2(2.0, 0.0), Align2::CENTER_CENTER, icono::REPRODUCIR, FontId::new(22.0 + 8.0 * t, iconos()), Color32::WHITE.gamma_multiply(1.0 - t));
+                ctx.request_repaint();
+            }
         }
         if let Some(e) = &v.error {
             if v.reproductor.is_none() {
@@ -553,13 +657,27 @@ impl App {
                 p.galley(pos, g, ROJO);
             }
         }
-        if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
-            v.alternar();
-        }
-        ui.add_space(8.0);
 
-        // Controles: reproducir/pausa, tiempo y la barra de reproducción.
-        if v.reproductor.is_some() {
+        // Clic: reproducir o pausar. Doble clic: pantalla completa. Rueda: volumen.
+        let resp = resp.on_hover_cursor(if mostrar { CursorIcon::PointingHand } else { CursorIcon::None });
+        if resp.double_clicked() {
+            self.alternar_pantalla_completa(&ctx);
+        } else if resp.clicked() {
+            v.alternar();
+            v.destello = Some((ahora, !sonando));
+        }
+        if encima {
+            let rueda = ui.input(|i| i.raw_scroll_delta.y);
+            if rueda != 0.0 {
+                self.cambiar_volumen(self.volumen + rueda.signum() * 0.05);
+            }
+        }
+        if let Some(r) = &v.reproductor {
+            r.poner_volumen_general(if self.silencio { 0.0 } else { self.volumen });
+        }
+
+        // Los controles: la barra de tiempo arriba y, abajo, reproducir, tiempo, volumen y pantalla completa.
+        if v.reproductor.is_some() && vis > 0.01 {
             let (dur, pos) = (v.duracion(), v.posicion());
             // En el editor, el video se para al llegar al fin del recorte.
             if v.modo == Modo::Editar && sonando && v.arrastre.is_none() && pos >= v.fin {
@@ -568,18 +686,46 @@ impl App {
                     r.buscar(v.fin);
                 }
             }
-            let mut alternar = false;
-            let mut barra = None;
-            ui.horizontal(|ui| {
+            // Fondo que se oscurece hacia abajo (franjas de opacidad creciente).
+            let banda = Rect::from_min_max(pos2(caja.left(), caja.bottom() - 84.0), caja.max);
+            for k in 0..8 {
+                let f = Rect::from_min_max(pos2(banda.left(), banda.top() + banda.height() * k as f32 / 8.0), pos2(banda.right(), banda.top() + banda.height() * (k + 1) as f32 / 8.0));
+                p.rect_filled(f, 0.0, Color32::from_black_alpha(((20.0 + 22.0 * k as f32) * vis) as u8));
+            }
+            let zona = banda.shrink2(vec2(14.0, 8.0));
+            let mut hijo = ui.new_child(egui::UiBuilder::new().max_rect(zona).layout(egui::Layout::top_down(egui::Align::Min)));
+            hijo.set_opacity(vis);
+            let (mut alternar, mut silenciar, mut completa_clic, mut vol) = (false, false, false, self.volumen);
+            let barra = Some(barra_reproduccion(&mut hijo, dur, pos, v.arrastre == Some(Arrastre::Cabezal)));
+            hijo.horizontal(|ui| {
                 let (icono_rp, ayuda) = if sonando { (icono::PAUSA, "Pausa (Espacio)") } else { (icono::REPRODUCIR, "Reproducir (Espacio)") };
                 alternar = boton_icono(ui, icono_rp, ayuda).clicked();
-                ui.add_space(4.0);
-                ui.label(RichText::new(format!("{} / {}", tiempo(pos), tiempo(dur))).size(12.5).color(SECUNDARIO).monospace());
+                let (icono_vol, ayuda_vol) = if self.silencio || self.volumen == 0.0 { (icono::SILENCIO, "Activar sonido (M)") } else { (icono::VOLUMEN, "Silenciar (M)") };
+                silenciar = boton_icono(ui, icono_vol, ayuda_vol).clicked();
+                let mut x = if self.silencio { 0.0 } else { self.volumen * 100.0 };
+                if deslizador(ui, &mut x, 0.0..=100.0, 1.0, 90.0, true) {
+                    vol = x / 100.0;
+                }
                 ui.add_space(8.0);
-                barra = Some(barra_reproduccion(ui, dur, pos, v.arrastre == Some(Arrastre::Cabezal)));
+                ui.label(RichText::new(format!("{} / {}", tiempo(pos), tiempo(dur))).size(12.5).color(Color32::from_gray(225)).monospace());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let ayuda = if completa { "Salir de pantalla completa (F o Esc)" } else { "Pantalla completa (F o doble clic)" };
+                    completa_clic = boton_icono(ui, if completa { icono::ACHICAR } else { icono::AGRANDAR }, ayuda).clicked();
+                });
             });
             if alternar {
                 v.alternar();
+                v.destello = Some((ahora, !sonando));
+            }
+            if silenciar {
+                self.alternar_silencio();
+            }
+            if vol != self.volumen {
+                self.silencio = false;
+                self.cambiar_volumen(vol);
+            }
+            if completa_clic {
+                self.alternar_pantalla_completa(&ctx);
             }
             if let Some((resp, t)) = barra {
                 if resp.drag_started() {
@@ -592,6 +738,13 @@ impl App {
                     v.terminar_arrastre();
                 }
             }
+        }
+        if completa {
+            if cerrar {
+                self.alternar_pantalla_completa(&ctx);
+            }
+            self.visor = Some(v);
+            return;
         }
         ui.add_space(14.0);
 
@@ -620,6 +773,9 @@ impl App {
         }
 
         if cerrar {
+            if self.pantalla_completa {
+                self.alternar_pantalla_completa(&ctx);
+            }
             if let Some(t) = &v.tarea {
                 t.cancelar.store(true, Ordering::SeqCst);
             }
@@ -772,7 +928,7 @@ fn panel_ver(ui: &mut Ui, v: &Visor) {
         }
         return;
     }
-    nota(ui, "Espacio: reproducir o pausar · ← →: 5 segundos · Esc: volver a la biblioteca. En «Editar» puedes recortarlo y cambiar el volumen de cada pista.");
+    nota(ui, "Espacio: reproducir o pausar · ← →: 5 s · ↑ ↓ o la rueda: volumen · M: silencio · F o doble clic: pantalla completa · Esc: volver. En «Editar» puedes recortarlo y cambiar el volumen de cada pista.");
 }
 
 /// La barra de reproducción: clic o arrastre para ir a otro momento (mientras se arrastra, el video queda en

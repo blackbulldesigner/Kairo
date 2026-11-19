@@ -26,14 +26,15 @@ use super::{bytes_de, ir_a, FRECUENCIA, SEGUNDO};
 const ANCHO_MAXIMO: u32 = 1280;
 const ALTO_MAXIMO: u32 = 720;
 /// Cuadros decodificados por adelantado.
-const COLA_VIDEO: usize = 4;
+const COLA_VIDEO: usize = 8;
 
 pub struct Cuadro {
     /// Segundos desde el inicio del clip.
     pub t: f64,
     pub ancho: usize,
     pub alto: usize,
-    pub rgba: Vec<u8>,
+    /// Ya lista para la textura (la conversión se hace en el hilo del video, no en el de la ventana).
+    pub imagen: eframe::egui::ColorImage,
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +60,8 @@ struct Compartido {
     mostrar_siguiente: AtomicBool,
     /// Volumen de cada pista de audio del archivo (mismo orden).
     volumenes: Mutex<Vec<f32>>,
+    /// Volumen del reproductor (0 a 1), encima del de cada pista.
+    general: Mutex<f32>,
     duracion: f64,
     /// Para pedirle a la ventana que se vuelva a dibujar.
     avisar: Box<dyn Fn() + Send + Sync>,
@@ -110,6 +113,7 @@ impl Reproductor {
             buscar_video: AtomicI64::new(-1),
             mostrar_siguiente: AtomicBool::new(true),
             volumenes: Mutex::new(volumenes),
+            general: Mutex::new(1.0),
             duracion: info.duracion,
             avisar: Box::new(avisar),
         });
@@ -156,6 +160,13 @@ impl Reproductor {
     /// Segundos desde el inicio.
     pub fn posicion(&self) -> f64 {
         self.c.posicion()
+    }
+
+    /// El volumen del reproductor (0 a 1), para todas las pistas.
+    pub fn poner_volumen_general(&self, v: f32) {
+        if let Ok(mut x) = self.c.general.lock() {
+            *x = v.clamp(0.0, 1.0);
+        }
     }
 
     pub fn poner_volumenes(&self, v: Vec<f32>) {
@@ -218,25 +229,20 @@ unsafe fn abrir_video(ruta: &Path) -> Result<(IMFSourceReader, u32, usize, usize
     Ok((l, flujo, aw, ah, stride))
 }
 
-/// BGRX (RGB32 de Windows) a RGBA, respetando el stride (negativo = la imagen viene de abajo hacia arriba).
-fn a_rgba(datos: &[u8], ancho: usize, alto: usize, stride: isize) -> Option<Vec<u8>> {
+/// BGRX (RGB32 de Windows) a una imagen de egui, respetando el stride (negativo = viene de abajo hacia arriba).
+fn a_imagen(datos: &[u8], ancho: usize, alto: usize, stride: isize) -> Option<eframe::egui::ColorImage> {
+    use eframe::egui::Color32;
     let paso = stride.unsigned_abs();
     if paso < ancho * 4 || datos.len() < paso * (alto - 1) + ancho * 4 {
         return None;
     }
-    let mut rgba = vec![0u8; ancho * alto * 4];
+    let mut pixeles = Vec::with_capacity(ancho * alto);
     for y in 0..alto {
         let fila = if stride < 0 { alto - 1 - y } else { y };
         let origen = &datos[fila * paso..fila * paso + ancho * 4];
-        let destino = &mut rgba[y * ancho * 4..(y + 1) * ancho * 4];
-        for (d, o) in destino.chunks_exact_mut(4).zip(origen.chunks_exact(4)) {
-            d[0] = o[2];
-            d[1] = o[1];
-            d[2] = o[0];
-            d[3] = 255;
-        }
+        pixeles.extend(origen.chunks_exact(4).map(|o| Color32::from_rgb(o[2], o[1], o[0])));
     }
-    Some(rgba)
+    Some(eframe::egui::ColorImage { size: [ancho, alto], pixels: pixeles })
 }
 
 fn hilo_video(ruta: &Path, c: &Compartido) {
@@ -283,9 +289,9 @@ fn hilo_video(ruta: &Path, c: &Compartido) {
             }
             descartar_hasta = None;
         }
-        let Some(rgba) = unsafe { bytes_de(&m) }.ok().and_then(|b| a_rgba(&b, ancho, alto, stride)) else { continue };
+        let Some(imagen) = unsafe { bytes_de(&m) }.ok().and_then(|b| a_imagen(&b, ancho, alto, stride)) else { continue };
         if let Ok(mut q) = c.cuadros.lock() {
-            q.push_back(Cuadro { t, ancho, alto, rgba });
+            q.push_back(Cuadro { t, ancho, alto, imagen });
         }
         if c.mostrar_siguiente.load(Ordering::SeqCst) {
             (c.avisar)();
@@ -404,10 +410,10 @@ impl Salida {
 }
 
 /// Mezcla `cuadros` cuadros de todas las pistas con su volumen.
-fn mezclar(pistas: &mut [PistaAudio], volumenes: &[f32], cuadros: usize) -> Vec<f32> {
+fn mezclar(pistas: &mut [PistaAudio], volumenes: &[f32], general: f32, cuadros: usize) -> Vec<f32> {
     let mut salida = vec![0f32; cuadros * 2];
     for (i, p) in pistas.iter_mut().enumerate() {
-        let vol = volumenes.get(i).copied().unwrap_or(0.0);
+        let vol = volumenes.get(i).copied().unwrap_or(0.0) * general;
         p.llenar(cuadros);
         let n = (cuadros * 2).min(p.cola.len());
         if vol > 0.0 {
@@ -437,7 +443,7 @@ fn hilo_audio(ruta: &Path, c: &Compartido, ordenes: Receiver<Orden>, cantidad: u
             let vol = c.volumenes.lock().map(|v| v.clone()).unwrap_or_default();
             unsafe {
                 let libre = s.libre();
-                s.escribir(&mezclar(pistas, &vol, libre));
+                s.escribir(&mezclar(pistas, &vol, c.general.lock().map(|g| *g).unwrap_or(1.0), libre));
             }
         }
     };
@@ -521,7 +527,7 @@ fn hilo_audio(ruta: &Path, c: &Compartido, ordenes: Receiver<Orden>, cantidad: u
             unsafe {
                 let libre = s.libre();
                 if libre > 0 {
-                    s.escribir(&mezclar(&mut pistas, &vol, libre));
+                    s.escribir(&mezclar(&mut pistas, &vol, c.general.lock().map(|g| *g).unwrap_or(1.0), libre));
                 }
             }
         }
