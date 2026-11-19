@@ -16,6 +16,8 @@ pub struct Pedido {
     pub modo_juego: bool,
     /// "audio-programas": la página Audio con "Solo los programas que elijas" (sin guardarlo).
     pub programas: bool,
+    /// "grabacion-avanzado": la página Grabación con las opciones avanzadas a la vista (sin guardarlo).
+    pub avanzado: bool,
     ruta: PathBuf,
     cuadros: u32,
     pedida: bool,
@@ -29,13 +31,14 @@ pub fn desde_args(args: &[String]) -> Option<Pedido> {
     let nombre = args.get(i + 1)?;
     let modo_juego = nombre == "grabacion-juego";
     let programas = nombre == "audio-programas";
-    let pagina = Pagina::desde(nombre.trim_end_matches("-juego").trim_end_matches("-programas"))?;
+    let avanzado = nombre == "grabacion-avanzado";
+    let pagina = Pagina::desde(nombre.trim_end_matches("-juego").trim_end_matches("-programas").trim_end_matches("-avanzado"))?;
     let ruta = PathBuf::from(args.get(i + 2)?);
     let tamano = args.get(i + 3).and_then(|t| {
         let (w, h) = t.split_once('x')?;
         Some([w.parse().ok()?, h.parse().ok()?])
     });
-    Some(Pedido { pagina, tamano, modo_juego, programas, ruta, cuadros: 0, pedida: false })
+    Some(Pedido { pagina, tamano, modo_juego, programas, avanzado, ruta, cuadros: 0, pedida: false })
 }
 
 /// `--captura-instalador <archivo.png>`: la ventana del instalador (no instala nada).
@@ -45,7 +48,7 @@ pub fn del_instalador(args: &[String]) -> Option<Pedido> {
     }
     let i = args.iter().position(|a| a == "--captura-instalador")?;
     let ruta = PathBuf::from(args.get(i + 1)?);
-    Some(Pedido { pagina: Pagina::AcercaDe, tamano: None, modo_juego: false, programas: false, ruta, cuadros: 0, pedida: false })
+    Some(Pedido { pagina: Pagina::AcercaDe, tamano: None, modo_juego: false, programas: false, avanzado: false, ruta, cuadros: 0, pedida: false })
 }
 
 impl Pedido {

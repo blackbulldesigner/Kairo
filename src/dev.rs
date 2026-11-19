@@ -3,7 +3,8 @@
 //!   `tono` suena un tono a la mitad; `juego` hace que este mismo proceso sea "el juego" (el tono tiene
 //!   que quedar en la pista del juego y no en la del resto del sistema; activa las pistas separadas);
 //!   `solo-juego` graba en modo "Solo el juego"; `programa` suma este exe como programa elegido (el tono tiene
-//!   que quedar en su pista).
+//!   que quedar en su pista); `avanzado` graba con opciones avanzadas fuera de lo normal (6 Mbps constantes,
+//!   cuadro clave cada 2 s, perfil Básico, velocidad Rápida, audio a 128 kbps).
 //! - `--prueba-leer <archivo.mp4> [cuadro.png]`: abre el MP4 como lo haría un reproductor, cuenta cuadros,
 //!   mide cada pista de audio y guarda una imagen del cuadro del medio.
 //! - `--prueba-juego <segundos>`: muestra qué detecta como juego, dos veces por segundo.
@@ -26,7 +27,13 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     if let Some(k) = pos("--prueba-grabar") {
         let segundos: u32 = args.get(k + 1)?.parse().ok()?;
         let extra = |x: &str| args.iter().skip(k + 3).any(|a| a == x);
-        let opciones = Opciones { tono: extra("tono"), juego: extra("juego"), solo_juego: extra("solo-juego"), programa: extra("programa") };
+        let opciones = Opciones {
+            tono: extra("tono"),
+            juego: extra("juego"),
+            solo_juego: extra("solo-juego"),
+            programa: extra("programa"),
+            avanzado: extra("avanzado"),
+        };
         return Some(informar(prueba_grabar(segundos, args.get(k + 2)?, opciones)));
     }
     if let Some(k) = pos("--prueba-juego") {
@@ -189,10 +196,11 @@ struct Opciones {
     juego: bool,
     solo_juego: bool,
     programa: bool,
+    avanzado: bool,
 }
 
 fn prueba_grabar(segundos: u32, ruta: &str, o: Opciones) -> Result<()> {
-    let Opciones { tono, juego, solo_juego, programa } = o;
+    let Opciones { tono, juego, solo_juego, programa, avanzado } = o;
     iniciar_mf()?;
     let mut cfg = Config::cargar();
     cfg.segundos = segundos;
@@ -211,6 +219,20 @@ fn prueba_grabar(segundos: u32, ruta: &str, o: Opciones) -> Result<()> {
         cfg.otros_sonidos = crate::config::OtrosSonidos::Elegidos;
         cfg.programas_audio = vec![crate::config::ProgramaAudio { exe: "kairo.exe".into(), nombre: "Prueba".into(), activa: true, volumen: 100 }];
         cfg.pistas_separadas = true;
+    }
+    if avanzado {
+        // Opciones avanzadas fuera de lo normal: el encoder tiene que aceptarlas.
+        use crate::config::{ControlBitrate, PerfilH264, VelocidadEncoder, VideoAvanzado};
+        cfg.avanzado = VideoAvanzado {
+            activo: true,
+            mbps: 6.0,
+            control: ControlBitrate::Constante,
+            pico: 1.5,
+            clave_cada: 2.0,
+            perfil: PerfilH264::Basico,
+            velocidad: VelocidadEncoder::Rapida,
+            audio_kbps: 128,
+        };
     }
     let g = Grabadora::iniciar(&cfg);
     std::thread::sleep(Duration::from_millis(segundos as u64 * 500));
@@ -265,12 +287,20 @@ fn prueba_leer(ruta: &str, png: Option<&str>) -> Result<()> {
             let extra = if mayor == "video" {
                 let s = t.GetUINT64(&MF_MT_FRAME_SIZE).unwrap_or(0);
                 let r = t.GetUINT64(&MF_MT_FRAME_RATE).unwrap_or(0);
-                format!("{}×{} a {} fps", s >> 32, s & 0xFFFF_FFFF, (r >> 32) / (r & 0xFFFF_FFFF).max(1))
+                let perfil = match t.GetUINT32(&MF_MT_MPEG2_PROFILE).unwrap_or(0) {
+                    66 => "perfil Básico",
+                    77 => "perfil Principal",
+                    100 => "perfil Alto",
+                    _ => "perfil ?",
+                };
+                let kbps = t.GetUINT32(&MF_MT_AVG_BITRATE).unwrap_or(0) / 1000;
+                format!("{}×{} a {} fps, {perfil}, {kbps} kbps", s >> 32, s & 0xFFFF_FFFF, (r >> 32) / (r & 0xFFFF_FFFF).max(1))
             } else {
                 format!(
-                    "{} Hz, {} canales",
+                    "{} Hz, {} canales, {} kbps",
                     t.GetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND).unwrap_or(0),
-                    t.GetUINT32(&MF_MT_AUDIO_NUM_CHANNELS).unwrap_or(0)
+                    t.GetUINT32(&MF_MT_AUDIO_NUM_CHANNELS).unwrap_or(0),
+                    t.GetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND).unwrap_or(0) * 8 / 1000
                 )
             };
             println!("pista {i}: {mayor} {sub} {extra}");

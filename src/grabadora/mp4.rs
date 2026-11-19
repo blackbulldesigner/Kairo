@@ -24,6 +24,8 @@ pub struct AudioDelClip {
     /// Nombre de cada pista del buffer ("Juego", "Discord"…).
     pub nombres: Vec<String>,
     pub separadas: bool,
+    /// AAC: 12 000 (96 kbps), 16 000, 20 000 o 24 000 (192 kbps) bytes por segundo.
+    pub bytes_por_segundo: u32,
 }
 
 fn tamano(a: u32, b: u32) -> u64 {
@@ -123,15 +125,15 @@ impl PistaDeAudio {
     }
 }
 
-unsafe fn agregar_pista_aac(escritor: &IMFSinkWriter) -> Result<u32> {
+unsafe fn agregar_pista_aac(escritor: &IMFSinkWriter, bytes_por_segundo: u32) -> Result<u32> {
     let aac = MFCreateMediaType()?;
     aac.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
     aac.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_AAC)?;
     aac.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, FRECUENCIA_AUDIO)?;
     aac.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2)?;
     aac.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)?;
-    // 24000 bytes/s = 192 kbps.
-    aac.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 24_000)?;
+    // 24000 bytes/s = 192 kbps (el encoder AAC de Windows acepta 12000, 16000, 20000 y 24000).
+    aac.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, bytes_por_segundo)?;
     let flujo = escritor.AddStream(&aac)?;
     let pcm = MFCreateMediaType()?;
     pcm.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
@@ -198,7 +200,7 @@ pub fn escribir(ruta: &Path, clip: &Clip, audio: &AudioDelClip) -> Result<Vec<St
         // tocan la primera pista de audio, que tiene que ser la mezcla: por eso se agregan al revés.
         let mut pistas = Vec::with_capacity(pcm_pistas.len());
         for pcm in pcm_pistas.into_iter().rev() {
-            pistas.push(PistaDeAudio { flujo: agregar_pista_aac(&escritor)?, pcm, escrito: 0 });
+            pistas.push(PistaDeAudio { flujo: agregar_pista_aac(&escritor, audio.bytes_por_segundo)?, pcm, escrito: 0 });
         }
 
         escritor.BeginWriting()?;

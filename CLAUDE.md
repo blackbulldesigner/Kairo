@@ -67,8 +67,11 @@ Ver `README.md` para el plan por fases.
   pistas separadas: el tono tiene que quedar en la pista del juego y no en la del sistema. `solo-juego` sin
   juego adelante tiene que dar un clip negro. `--prueba-juego <s>` muestra la detección y los programas abiertos.
   `programa` suma `kairo.exe` como programa elegido: el tono tiene que quedar en su pista y en la mezcla.
+  `avanzado` graba con opciones avanzadas raras (CBR, cuadro clave cada 2 s, perfil Básico, audio a 128 kbps):
+  `--prueba-leer` muestra el perfil y el bitrate de cada pista para comprobarlo.
 - `--captura-ui <pagina> <png> [1700x950]` saca la página con ese tamaño de ventana; `grabacion-juego` la
-  muestra con "Solo el juego" puesto y `audio-programas` con "Solo los programas que elijas" (sin guardarlo).
+  muestra con "Solo el juego" puesto y `audio-programas` con "Solo los programas que elijas" y
+  `grabacion-avanzado` con las opciones avanzadas abiertas (sin guardarlo).
   `biblioteca` espera a que estén las miniaturas (como mucho ~10 s).
 - El sink writer de MP4 deja las pistas en orden inverso al que se agregan: la mezcla se agrega última para
   quedar primera (es la que tocan los reproductores).

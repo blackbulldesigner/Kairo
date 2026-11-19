@@ -116,6 +116,99 @@ impl Calidad {
     }
 }
 
+/// Cómo reparte el encoder los bits.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum ControlBitrate {
+    /// Variable con tope: más bits en las escenas movidas, sin pasarse del pico.
+    Variable,
+    /// Constante: el mismo tamaño cada segundo (más predecible, a veces menos calidad).
+    Constante,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum PerfilH264 {
+    /// High: la mejor compresión.
+    Alto,
+    /// Main.
+    Principal,
+    /// Baseline: para celulares o reproductores muy viejos.
+    Basico,
+}
+
+/// Cuánto trabaja el encoder por cuadro (CODECAPI_AVEncCommonQualityVsSpeed).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum VelocidadEncoder {
+    /// Lo que decida el driver de la tarjeta.
+    Automatica,
+    /// Menos trabajo para la tarjeta (ideal en laptops).
+    Rapida,
+    Equilibrada,
+    /// Mejor imagen con el mismo bitrate, un poco más de trabajo.
+    Calidad,
+}
+
+impl VelocidadEncoder {
+    /// Valor para el encoder (0 = lo más rápido, 100 = la mejor calidad).
+    pub fn valor(self) -> Option<u32> {
+        match self {
+            VelocidadEncoder::Automatica => None,
+            VelocidadEncoder::Rapida => Some(0),
+            VelocidadEncoder::Equilibrada => Some(50),
+            VelocidadEncoder::Calidad => Some(100),
+        }
+    }
+}
+
+/// Grabación → Opciones avanzadas. Si `activo` es false se usa lo de siempre (lo que dice "Calidad").
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoAvanzado {
+    pub activo: bool,
+    /// Bitrate promedio del video, en Mbps.
+    pub mbps: f32,
+    pub control: ControlBitrate,
+    /// Con bitrate variable: el pico, como múltiplo del promedio (1,5 = hasta 50 % más).
+    pub pico: f32,
+    /// Un cuadro clave cada tantos segundos (0,5, 1 o 2). El clip y los recortes empiezan en uno.
+    pub clave_cada: f32,
+    pub perfil: PerfilH264,
+    pub velocidad: VelocidadEncoder,
+    /// Audio AAC en kbps (96, 128, 160 o 192).
+    pub audio_kbps: u32,
+}
+
+impl Default for VideoAvanzado {
+    fn default() -> Self {
+        Self {
+            activo: false,
+            mbps: 16.0,
+            control: ControlBitrate::Variable,
+            pico: 1.5,
+            clave_cada: 1.0,
+            perfil: PerfilH264::Alto,
+            velocidad: VelocidadEncoder::Automatica,
+            audio_kbps: 192,
+        }
+    }
+}
+
+pub const MBPS_MIN: f32 = 2.0;
+pub const MBPS_MAX: f32 = 80.0;
+
+/// Lo que necesita el encoder de video (sale de la configuración: ver `Config::ajustes_encoder`).
+#[derive(Clone, Copy, Debug)]
+pub struct AjustesEncoder {
+    pub fps: u32,
+    /// Bits por segundo.
+    pub bitrate: u32,
+    pub control: ControlBitrate,
+    pub pico: f32,
+    /// Cuadros entre cuadros clave.
+    pub gop: u32,
+    pub perfil: PerfilH264,
+    pub velocidad: VelocidadEncoder,
+}
+
 /// Con qué tarjeta de video se comprime el video (importa en laptops con dos tarjetas).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum TarjetaGrabacion {
@@ -282,6 +375,7 @@ pub struct Config {
     pub resolucion: Resolucion,
     pub fps: u32,
     pub calidad: Calidad,
+    pub avanzado: VideoAvanzado,
     pub tarjeta: TarjetaGrabacion,
     /// Laptops: con la batería, graba a 720p y en calidad Ligera.
     pub ahorro_bateria: bool,
@@ -313,6 +407,7 @@ impl Default for Config {
             resolucion: Resolucion::P1080,
             fps: 60,
             calidad: Calidad::Equilibrada,
+            avanzado: VideoAvanzado::default(),
             tarjeta: TarjetaGrabacion::Automatica,
             ahorro_bateria: true,
             audio_juego: FuenteAudio::default(),
@@ -367,6 +462,33 @@ impl Config {
         if self.carpeta.as_os_str().is_empty() {
             self.carpeta = carpeta_videos();
         }
+        let a = &mut self.avanzado;
+        a.mbps = if a.mbps.is_finite() { (a.mbps.clamp(MBPS_MIN, MBPS_MAX) * 2.0).round() / 2.0 } else { 16.0 };
+        a.pico = if a.pico.is_finite() { (a.pico.clamp(1.1, 3.0) * 10.0).round() / 10.0 } else { 1.5 };
+        a.clave_cada = [0.5, 1.0, 2.0].into_iter().find(|v| (v - a.clave_cada).abs() < 0.01).unwrap_or(1.0);
+        if ![96, 128, 160, 192].contains(&a.audio_kbps) {
+            a.audio_kbps = 192;
+        }
+    }
+
+    /// Los ajustes del encoder de video para un monitor de `nativa` píxeles.
+    pub fn ajustes_encoder(&self, nativa: (u32, u32)) -> AjustesEncoder {
+        let a = if self.avanzado.activo { self.avanzado.clone() } else { VideoAvanzado::default() };
+        AjustesEncoder {
+            fps: self.fps,
+            bitrate: (self.mbps(nativa) * 1_000_000.0) as u32,
+            control: a.control,
+            pico: a.pico,
+            gop: ((self.fps as f32 * a.clave_cada).round() as u32).max(1),
+            perfil: a.perfil,
+            velocidad: a.velocidad,
+        }
+    }
+
+    /// Bitrate del audio AAC en bytes por segundo (lo que pide Media Foundation).
+    pub fn audio_bytes_por_segundo(&self) -> u32 {
+        let kbps = if self.avanzado.activo { self.avanzado.audio_kbps } else { 192 };
+        kbps * 1000 / 8
     }
 
     pub fn atajo(&self, c: CualAtajo) -> Option<&Atajo> {
@@ -399,8 +521,17 @@ impl Config {
         }
     }
 
-    /// Bitrate estimado del video (Mbps): crece con los píxeles y los cuadros, pero menos que lineal.
+    /// Bitrate del video (Mbps). Con las opciones avanzadas, el elegido; si no, uno que crece con los píxeles
+    /// y los cuadros, pero menos que lineal.
     pub fn mbps(&self, nativa: (u32, u32)) -> f32 {
+        if self.avanzado.activo {
+            return self.avanzado.mbps;
+        }
+        self.mbps_de_la_calidad(nativa)
+    }
+
+    /// El bitrate que daría "Calidad" (también es el punto de partida al activar las opciones avanzadas).
+    pub fn mbps_de_la_calidad(&self, nativa: (u32, u32)) -> f32 {
         let (w, h) = self.tamano_clip(nativa);
         let pixeles = (w * h) as f32 / (1920.0 * 1080.0);
         let cuadros = self.fps as f32 / 60.0;

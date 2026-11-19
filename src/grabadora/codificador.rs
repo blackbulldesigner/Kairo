@@ -11,6 +11,7 @@ use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use super::buffer::PaqueteVideo;
 use super::encoder::{color_bt709, sacar_paquete, tamano, Encoder, Salida};
 use super::reloj::SEGUNDO;
+use crate::config::{AjustesEncoder, PerfilH264};
 
 pub enum Codificador {
     Hardware(Encoder),
@@ -71,7 +72,10 @@ pub struct EncoderProcesador {
 }
 
 impl EncoderProcesador {
-    pub fn abrir(dispositivo: &ID3D11Device, ancho: u32, alto: u32, fps: u32, bitrate: u32) -> Result<Self> {
+    /// Siempre con bitrate constante y lo más rápido posible; del resto se respeta lo elegido (cuadros clave
+    /// y perfil, que en este encoder es como mucho Main).
+    pub fn abrir(dispositivo: &ID3D11Device, ancho: u32, alto: u32, ajustes: &AjustesEncoder) -> Result<Self> {
+        let (fps, bitrate) = (ajustes.fps, ajustes.bitrate);
         unsafe {
             let mft: IMFTransform =
                 CoCreateInstance(&CLSID_MSH264EncoderMFT, None, CLSCTX_INPROC_SERVER).context("Windows no tiene el encoder H.264")?;
@@ -81,7 +85,7 @@ impl EncoderProcesador {
                 };
                 poner(&CODECAPI_AVEncCommonRateControlMode, VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32));
                 poner(&CODECAPI_AVEncCommonMeanBitRate, VARIANT::from(bitrate));
-                poner(&CODECAPI_AVEncMPVGOPSize, VARIANT::from(fps));
+                poner(&CODECAPI_AVEncMPVGOPSize, VARIANT::from(ajustes.gop));
                 poner(&CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0u32));
                 poner(&CODECAPI_AVLowLatencyMode, VARIANT::from(true));
                 // Prioriza la velocidad: lo importante es no quitarle procesador al juego.
@@ -95,7 +99,8 @@ impl EncoderProcesador {
             salida.SetUINT64(&MF_MT_FRAME_RATE, tamano(fps, 1))?;
             salida.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, tamano(1, 1))?;
             salida.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-            salida.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32)?;
+            let perfil = if ajustes.perfil == PerfilH264::Basico { PerfilH264::Basico } else { PerfilH264::Principal };
+            salida.SetUINT32(&MF_MT_MPEG2_PROFILE, super::encoder::perfil(perfil))?;
             color_bt709(&salida)?;
             mft.SetOutputType(0, &salida, 0).with_context(|| format!("el encoder por procesador no acepta {ancho}×{alto}"))?;
 

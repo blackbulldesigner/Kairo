@@ -5,7 +5,9 @@ use eframe::egui::{self, Ui};
 use super::app::App;
 use super::tema::*;
 use super::widgets::*;
-use crate::config::{self, Calidad, CualAtajo, FuenteAudio, ModoCaptura, OtrosSonidos, Resolucion, TarjetaGrabacion};
+use crate::config::{
+    self, Calidad, ControlBitrate, CualAtajo, FuenteAudio, ModoCaptura, OtrosSonidos, PerfilH264, Resolucion, TarjetaGrabacion, VelocidadEncoder,
+};
 use crate::equipo::Equipo;
 use crate::version;
 
@@ -144,12 +146,21 @@ impl App {
             });
             separador(ui);
 
-            let desc = format!("Unos {} Mbps. «Ligera» es ideal para laptops.", self.cfg.mbps(nativa).to_string().replace('.', ","));
+            let avanzado = self.cfg.avanzado.activo;
+            let desc = if avanzado {
+                format!("Personalizada en Opciones avanzadas: {} Mbps.", texto_mbps(self.cfg.mbps(nativa)))
+            } else {
+                format!("Unos {} Mbps. «Ligera» es ideal para laptops.", texto_mbps(self.cfg.mbps(nativa)))
+            };
             fila(ui, "Calidad", Some(&desc), |ui| {
                 let opciones: Vec<(Calidad, Option<&str>, &str)> = Calidad::TODAS.iter().map(|c| (*c, None, c.nombre())).collect();
-                segmentos(ui, "calidad", &mut self.cfg.calidad, &opciones, None, 32.0);
+                ui.add_enabled_ui(!avanzado, |ui| {
+                    segmentos(ui, "calidad", &mut self.cfg.calidad, &opciones, None, 32.0);
+                });
             });
         });
+
+        self.tarjeta_avanzado(ui, nativa);
 
         tarjeta(ui, "Rendimiento", |ui| {
             match eq {
@@ -196,6 +207,111 @@ impl App {
                     interruptor(ui, &mut self.cfg.ahorro_bateria, true);
                 });
             }
+        });
+    }
+
+    /// Grabación → Opciones avanzadas: bitrate, control, cuadros clave, perfil, velocidad del encoder y audio.
+    fn tarjeta_avanzado(&mut self, ui: &mut Ui, nativa: (u32, u32)) {
+        let de_la_calidad = self.cfg.mbps_de_la_calidad(nativa);
+        tarjeta(ui, "Opciones avanzadas", |ui| {
+            let mut activo = self.cfg.avanzado.activo;
+            fila(
+                ui,
+                "Personalizar el video",
+                Some("Elige tú el bitrate, los cuadros clave y cómo trabaja el encoder. Apagado, Kairo usa lo que dice «Calidad»."),
+                |ui| {
+                    if interruptor(ui, &mut activo, true) {
+                        self.cfg.avanzado.activo = activo;
+                        // Arranca desde lo que daba la calidad elegida.
+                        if activo {
+                            self.cfg.avanzado.mbps = (de_la_calidad * 2.0).round().clamp(config::MBPS_MIN * 2.0, config::MBPS_MAX * 2.0) / 2.0;
+                        }
+                    }
+                },
+            );
+            if !self.cfg.avanzado.activo {
+                return;
+            }
+            let a = &mut self.cfg.avanzado;
+            separador(ui);
+            let por_minuto = config::texto_bytes((a.mbps as f64 * 125_000.0 * 60.0) as u64);
+            let desc = format!("Más alto = mejor imagen y clips más pesados. Un minuto de video ocupa unos {por_minuto}.");
+            fila(ui, "Bitrate del video", Some(&desc), |ui| {
+                valor(ui, &format!("{} Mbps", texto_mbps(a.mbps)), 76.0, true);
+                deslizador(ui, &mut a.mbps, config::MBPS_MIN..=config::MBPS_MAX, 0.5, 190.0, true);
+            });
+            separador(ui);
+            let desc = match a.control {
+                ControlBitrate::Variable => "Variable: más bits en las escenas con movimiento, sin pasarse del pico. Recomendado.",
+                ControlBitrate::Constante => "Constante: el mismo tamaño cada segundo. Más predecible, a veces con menos detalle.",
+            };
+            fila(ui, "Control del bitrate", Some(desc), |ui| {
+                segmentos(
+                    ui,
+                    "control",
+                    &mut a.control,
+                    &[(ControlBitrate::Variable, None, "Variable"), (ControlBitrate::Constante, None, "Constante")],
+                    None,
+                    32.0,
+                );
+            });
+            if a.control == ControlBitrate::Variable {
+                separador(ui);
+                fila(ui, "Pico máximo", Some("Cuánto puede subir en las escenas con mucho movimiento (×1,5 = hasta 50 % más)."), |ui| {
+                    valor(ui, &format!("×{}", texto_mbps(a.pico)), 52.0, true);
+                    deslizador(ui, &mut a.pico, 1.1..=3.0, 0.1, 160.0, true);
+                });
+            }
+            separador(ui);
+            fila(
+                ui,
+                "Cuadro clave cada",
+                Some("Los clips y los recortes del editor empiezan en un cuadro clave: más seguido = más precisos, un poco más pesados."),
+                |ui| {
+                    segmentos(ui, "clave", &mut a.clave_cada, &[(0.5, None, "0,5 s"), (1.0, None, "1 s"), (2.0, None, "2 s")], None, 32.0);
+                },
+            );
+            separador(ui);
+            fila(ui, "Perfil H.264", Some("«Alto» comprime mejor. «Básico» solo si un celular o un reproductor viejo no abre tus clips."), |ui| {
+                segmentos(
+                    ui,
+                    "perfil",
+                    &mut a.perfil,
+                    &[(PerfilH264::Alto, None, "Alto"), (PerfilH264::Principal, None, "Principal"), (PerfilH264::Basico, None, "Básico")],
+                    None,
+                    32.0,
+                );
+            });
+            separador(ui);
+            fila(
+                ui,
+                "Velocidad del encoder",
+                Some("«Rápida» le pide menos a la tarjeta (ideal en laptops); «Calidad» da mejor imagen con el mismo bitrate."),
+                |ui| {
+                    segmentos(
+                        ui,
+                        "velocidad",
+                        &mut a.velocidad,
+                        &[
+                            (VelocidadEncoder::Automatica, None, "Auto"),
+                            (VelocidadEncoder::Rapida, None, "Rápida"),
+                            (VelocidadEncoder::Equilibrada, None, "Media"),
+                            (VelocidadEncoder::Calidad, None, "Calidad"),
+                        ],
+                        None,
+                        32.0,
+                    );
+                },
+            );
+            separador(ui);
+            fila(ui, "Audio", Some("Calidad del audio de los clips (AAC), en kbps."), |ui| {
+                segmentos(ui, "audio_kbps", &mut a.audio_kbps, &[(96, None, "96"), (128, None, "128"), (160, None, "160"), (192, None, "192")], None, 32.0);
+            });
+            ui.add_space(8.0);
+            if boton(ui, Some(icono::RECARGAR), "Volver a lo recomendado", Estilo::Secundario, true).clicked() {
+                *a = config::VideoAvanzado { activo: true, mbps: (de_la_calidad * 2.0).round() / 2.0, ..Default::default() };
+            }
+            ui.add_space(8.0);
         });
     }
 
@@ -608,6 +724,16 @@ impl App {
                 }
             }
         });
+    }
+}
+
+/// "16", "16,5" (con coma decimal).
+fn texto_mbps(v: f32) -> String {
+    let r = (v * 10.0).round() / 10.0;
+    if r.fract() == 0.0 {
+        format!("{}", r as i64)
+    } else {
+        format!("{r:.1}").replace('.', ",")
     }
 }
 

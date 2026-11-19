@@ -25,6 +25,8 @@ PCs de escritorio.
 - Abre Kairo: aparece el ícono de Kairo junto al reloj y se abre la ventana de Kairo en la Biblioteca.
 - **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto.
 - Clic derecho en el ícono: guardar, pausar, abrir la carpeta de clips, ajustes y salir.
+- En Grabación → **Opciones avanzadas** puedes elegir el bitrate, si es variable o constante, cada cuánto va
+  un cuadro clave, el perfil H.264, la velocidad del encoder y la calidad del audio.
 - En Sistema puedes activar **Iniciar con Windows**.
 - **Acerca de** muestra la versión exacta del exe (commit y fecha) y la lista de novedades. Debajo del nombre,
   en el menú, siempre se ve la versión corta (por ejemplo `v0.2.0 · b820923`).

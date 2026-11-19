@@ -120,6 +120,9 @@ impl App {
         if captura.as_ref().is_some_and(|c| c.modo_juego) {
             cfg.modo = crate::config::ModoCaptura::Juego;
         }
+        if captura.as_ref().is_some_and(|c| c.avanzado) {
+            cfg.avanzado.activo = true;
+        }
         if captura.as_ref().is_some_and(|c| c.programas) {
             cfg.otros_sonidos = crate::config::OtrosSonidos::Elegidos;
             if let Some(p) = crate::grabadora::juego::programas_abiertos().into_iter().next() {

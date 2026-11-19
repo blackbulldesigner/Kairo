@@ -119,7 +119,7 @@ impl Guardador {
             .instantanea(segundos)
             .ok_or_else(|| anyhow!("todavía no hay nada grabado"))?;
         let (volumenes, nombres) = pistas_de_audio(cfg);
-        let audio = mp4::AudioDelClip { volumenes, nombres, separadas: cfg.pistas_separadas };
+        let audio = mp4::AudioDelClip { volumenes, nombres, separadas: cfg.pistas_separadas, bytes_por_segundo: cfg.audio_bytes_por_segundo() };
         if let Some(dir) = ruta.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -257,14 +257,14 @@ fn sesion_video(
     fn tamano(c: &Config) -> impl Fn(u32, u32) -> (u32, u32) + '_ {
         move |w, h| c.tamano_clip((w, h))
     }
-    let bitrate = |c: &Config, cap: &captura::Captura| (c.mbps((cap.ancho_monitor, cap.alto_monitor)) * 1_000_000.0) as u32;
+    let ajustes = |c: &Config, cap: &captura::Captura| c.ajustes_encoder((cap.ancho_monitor, cap.alto_monitor));
 
     let mut cfg = cfg_pedida.clone();
     let mut cap = captura::Captura::abrir(&monitor, &tarjeta, respaldo, tamano(&cfg), cfg.fps)?;
     let hardware = if forzado("KAIRO_PROCESADOR", "1") {
         Err(anyhow!("forzado con KAIRO_PROCESADOR"))
     } else {
-        encoder::Encoder::abrir(&cap.dispositivo, cap.luid, cap.ancho, cap.alto, cfg.fps, bitrate(&cfg, &cap))
+        encoder::Encoder::abrir(&cap.dispositivo, cap.luid, cap.ancho, cap.alto, &ajustes(&cfg, &cap))
     };
     let mut enc = match hardware {
         Ok(e) => codificador::Codificador::Hardware(e),
@@ -273,7 +273,7 @@ fn sesion_video(
             cfg = limitar_para_procesador(cfg_pedida);
             drop(cap);
             cap = captura::Captura::abrir(&monitor, &tarjeta, respaldo, tamano(&cfg), cfg.fps)?;
-            let e = codificador::EncoderProcesador::abrir(&cap.dispositivo, cap.ancho, cap.alto, cfg.fps, bitrate(&cfg, &cap))?;
+            let e = codificador::EncoderProcesador::abrir(&cap.dispositivo, cap.ancho, cap.alto, &ajustes(&cfg, &cap))?;
             // Que el juego tenga prioridad sobre la compresión.
             unsafe {
                 use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
@@ -283,7 +283,7 @@ fn sesion_video(
         }
     };
     let (ancho, alto) = enc.tamano();
-    let bitrate = bitrate(&cfg, &cap);
+    let bitrate = ajustes(&cfg, &cap).bitrate;
     let formato = FormatoVideo { ancho, alto, fps: cfg.fps, bitrate, encoder: enc.nombre().to_string() };
     let detalle = format!("{ancho}×{alto} a {} fps · {} · {} · {}", cfg.fps, enc.nombre(), cap.metodo, cap.nombre_tarjeta);
     log(&format!("grabando {} (monitor {} de {}×{})", detalle, monitor.id, cap.ancho_monitor, cap.alto_monitor));

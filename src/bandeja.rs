@@ -145,6 +145,8 @@ impl Bandeja {
         if self.ahorrando() {
             c.resolucion = Resolucion::P720;
             c.calidad = Calidad::Ligera;
+            // Las opciones avanzadas (por ejemplo, un bitrate alto) no cuentan mientras dure el ahorro.
+            c.avanzado.activo = false;
         }
         c
     }

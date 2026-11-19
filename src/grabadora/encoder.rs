@@ -15,6 +15,16 @@ use windows::Win32::System::Com::CoTaskMemFree;
 use super::buffer::PaqueteVideo;
 use super::h264;
 use super::reloj::SEGUNDO;
+use crate::config::{AjustesEncoder, ControlBitrate, PerfilH264};
+
+/// El perfil H.264 para Media Foundation.
+pub(super) fn perfil(p: PerfilH264) -> u32 {
+    match p {
+        PerfilH264::Alto => eAVEncH264VProfile_High.0 as u32,
+        PerfilH264::Principal => eAVEncH264VProfile_Main.0 as u32,
+        PerfilH264::Basico => eAVEncH264VProfile_Base.0 as u32,
+    }
+}
 
 pub struct Encoder {
     mft: IMFTransform,
@@ -54,7 +64,7 @@ unsafe fn luid_de(act: &IMFActivate) -> Option<LUID> {
 impl Encoder {
     /// Abre el encoder por hardware de la tarjeta `luid`. Si el tamaño no le gusta (algunos piden
     /// múltiplos de 16), prueba con el múltiplo de 16 más cercano hacia abajo.
-    pub fn abrir(dispositivo: &ID3D11Device, luid: LUID, ancho: u32, alto: u32, fps: u32, bitrate: u32) -> Result<Self> {
+    pub fn abrir(dispositivo: &ID3D11Device, luid: LUID, ancho: u32, alto: u32, ajustes: &AjustesEncoder) -> Result<Self> {
         let candidatos = unsafe { encoders_de(luid)? };
         if candidatos.is_empty() {
             bail!("Tu tarjeta de video no tiene encoder H.264 por hardware (la grabación por procesador llega más adelante).");
@@ -66,7 +76,7 @@ impl Encoder {
                 if i > 0 && (w, h) == tamanos[0] {
                     continue;
                 }
-                match unsafe { Self::probar(act, dispositivo, w, h, fps, bitrate) } {
+                match unsafe { Self::probar(act, dispositivo, w, h, ajustes) } {
                     Ok(e) => return Ok(e),
                     Err(e) => ultimo_error = Some(e),
                 }
@@ -75,7 +85,8 @@ impl Encoder {
         Err(ultimo_error.unwrap_or_else(|| anyhow!("ningún encoder aceptó la configuración")))
     }
 
-    unsafe fn probar(act: &IMFActivate, dispositivo: &ID3D11Device, ancho: u32, alto: u32, fps: u32, bitrate: u32) -> Result<Self> {
+    unsafe fn probar(act: &IMFActivate, dispositivo: &ID3D11Device, ancho: u32, alto: u32, ajustes: &AjustesEncoder) -> Result<Self> {
+        let (fps, bitrate) = (ajustes.fps, ajustes.bitrate);
         let nombre = nombre_de(act);
         let mft: IMFTransform = act.ActivateObject().with_context(|| format!("no se pudo abrir {nombre}"))?;
         let atributos = mft.GetAttributes()?;
@@ -95,16 +106,21 @@ impl Encoder {
         // Ajustes del encoder (si alguno no lo soporta, se sigue con lo que tenga por defecto).
         if let Ok(api) = mft.cast::<ICodecAPI>() {
             let poner = |clave: &windows::core::GUID, v: VARIANT| api.SetValue(clave, &v).is_ok();
-            // VBR con tope (1,5 × el promedio): calidad pareja sin pasarse de tamaño. Si no lo soporta, CBR.
-            // (Con VBR sin tope, NVIDIA llegó al doble del bitrate pedido.)
-            if poner(&CODECAPI_AVEncCommonRateControlMode, VARIANT::from(eAVEncCommonRateControlMode_PeakConstrainedVBR.0 as u32)) {
-                poner(&CODECAPI_AVEncCommonMaxBitRate, VARIANT::from(bitrate / 2 * 3));
+            // VBR con tope (por defecto 1,5 × el promedio): calidad pareja sin pasarse de tamaño. Si no lo
+            // soporta, o si se eligió constante, CBR. (Con VBR sin tope, NVIDIA llegó al doble del bitrate pedido.)
+            let variable = ajustes.control == ControlBitrate::Variable
+                && poner(&CODECAPI_AVEncCommonRateControlMode, VARIANT::from(eAVEncCommonRateControlMode_PeakConstrainedVBR.0 as u32));
+            if variable {
+                poner(&CODECAPI_AVEncCommonMaxBitRate, VARIANT::from((bitrate as f32 * ajustes.pico) as u32));
             } else {
                 poner(&CODECAPI_AVEncCommonRateControlMode, VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32));
             }
             poner(&CODECAPI_AVEncCommonMeanBitRate, VARIANT::from(bitrate));
-            // Un cuadro clave por segundo: el clip empieza como mucho 1 s antes de lo pedido.
-            poner(&CODECAPI_AVEncMPVGOPSize, VARIANT::from(fps));
+            // Un cuadro clave por segundo (o lo elegido): el clip empieza como mucho ese tiempo antes de lo pedido.
+            poner(&CODECAPI_AVEncMPVGOPSize, VARIANT::from(ajustes.gop));
+            if let Some(v) = ajustes.velocidad.valor() {
+                poner(&CODECAPI_AVEncCommonQualityVsSpeed, VARIANT::from(v));
+            }
             // Sin cuadros B: los tiempos de presentación y decodificación coinciden.
             poner(&CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0u32));
             poner(&CODECAPI_AVLowLatencyMode, VARIANT::from(true));
@@ -118,7 +134,7 @@ impl Encoder {
         salida.SetUINT64(&MF_MT_FRAME_RATE, tamano(fps, 1))?;
         salida.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, tamano(1, 1))?;
         salida.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-        salida.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)?;
+        salida.SetUINT32(&MF_MT_MPEG2_PROFILE, perfil(ajustes.perfil))?;
         color_bt709(&salida)?;
         if mft.SetOutputType(0, &salida, 0).is_err() {
             salida.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32)?;
