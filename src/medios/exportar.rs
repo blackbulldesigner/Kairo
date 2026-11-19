@@ -212,7 +212,12 @@ unsafe fn exportar_en(p: &Pedido, tmp: &std::path::Path, progreso: &dyn Fn(f32),
         }
     }
     let (t0, primera) = primero.ok_or_else(|| anyhow!("no se encontró un cuadro clave en el recorte"))?;
-    if tipo_video.GetBlobSize(&MF_MT_MPEG_SEQUENCE_HEADER).is_err() {
+    let es_hevc = tipo_video.GetGUID(&MF_MT_SUBTYPE).is_ok_and(|g| g == MFVideoFormat_HEVC);
+    if es_hevc {
+        // HEVC: el MP4 nuevo necesita VPS/SPS/PPS en Annex B (el tipo que da Windows al leer no los trae así).
+        let enc = crate::grabadora::h264::encabezado_hevc(&bytes_de(&primera)?).ok_or_else(|| anyhow!("el cuadro clave no trae VPS/SPS/PPS"))?;
+        tipo_video.SetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &enc)?;
+    } else if tipo_video.GetBlobSize(&MF_MT_MPEG_SEQUENCE_HEADER).is_err() {
         // Si el tipo no trae SPS/PPS, se sacan del cuadro clave.
         if let Some(enc) = crate::grabadora::h264::encabezado(&bytes_de(&primera)?) {
             tipo_video.SetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &enc)?;

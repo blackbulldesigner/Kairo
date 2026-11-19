@@ -1,4 +1,4 @@
-//! Utilidades mínimas de H.264 en formato Annex B (unidades NAL separadas por códigos de inicio).
+//! Utilidades mínimas de H.264 y HEVC en formato Annex B (unidades NAL separadas por códigos de inicio).
 
 /// Unidades NAL de un flujo Annex B (sin los códigos de inicio).
 pub fn unidades_nal(datos: &[u8]) -> Vec<&[u8]> {
@@ -48,7 +48,31 @@ pub fn encabezado(datos: &[u8]) -> Option<Vec<u8>> {
     Some(h)
 }
 
+/// Tipo de una unidad NAL de HEVC (VPS 32, SPS 33, PPS 34).
+fn tipo_hevc(n: &[u8]) -> u8 {
+    (n[0] >> 1) & 0x3F
+}
+
+/// ¿Trae VPS, SPS y PPS de HEVC?
+pub fn tiene_encabezado_hevc(datos: &[u8]) -> bool {
+    let nal = unidades_nal(datos);
+    [32, 33, 34].iter().all(|t| nal.iter().any(|n| tipo_hevc(n) == *t))
+}
+
+/// VPS, SPS y PPS de HEVC en Annex B.
+pub fn encabezado_hevc(datos: &[u8]) -> Option<Vec<u8>> {
+    let nal = unidades_nal(datos);
+    let mut h = Vec::new();
+    for t in [32, 33, 34] {
+        let n = nal.iter().find(|n| tipo_hevc(n) == t)?;
+        h.extend_from_slice(&[0, 0, 0, 1]);
+        h.extend_from_slice(n);
+    }
+    Some(h)
+}
+
 /// ¿Está en Annex B? (Empieza con un código de inicio.)
 pub fn es_annex_b(datos: &[u8]) -> bool {
     datos.starts_with(&[0, 0, 0, 1]) || datos.starts_with(&[0, 0, 1])
 }
+

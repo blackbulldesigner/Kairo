@@ -7,11 +7,12 @@
 
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use windows::core::HSTRING;
 use windows::Win32::Media::MediaFoundation::*;
 
 use super::buffer::{Clip, FRECUENCIA_AUDIO};
+use crate::config::Codec;
 use super::reloj::SEGUNDO;
 
 /// Cuadros de audio por muestra escrita (100 ms).
@@ -147,11 +148,48 @@ unsafe fn agregar_pista_aac(escritor: &IMFSinkWriter, bytes_por_segundo: u32) ->
     Ok(flujo)
 }
 
+/// ¿El MP4 de Windows acepta video en este formato? Se prueba armando un archivo vacío en la carpeta temporal.
+pub fn acepta(codec: Codec) -> bool {
+    match codec {
+        Codec::H264 => return true,
+        // Windows 10 acepta la pista AV1 pero no termina el archivo (pide un encabezado que no toma ni como
+        // sequence header ni como av1C): por ahora AV1 no se ofrece.
+        Codec::Av1 => return false,
+        Codec::Hevc => {}
+    }
+    let ruta = std::env::temp_dir().join(format!("kairo-prueba-{}-{}.mp4", codec.nombre(), std::process::id()));
+    let r = unsafe {
+        (|| -> Result<()> {
+            let mut atributos = None;
+            MFCreateAttributes(&mut atributos, 1)?;
+            let atributos = atributos.ok_or_else(|| anyhow!("sin atributos"))?;
+            atributos.SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_MPEG4)?;
+            let escritor = MFCreateSinkWriterFromURL(&HSTRING::from(ruta.as_os_str()), None, &atributos)?;
+            let t = MFCreateMediaType()?;
+            t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+            t.SetGUID(&MF_MT_SUBTYPE, &super::encoder::subtipo(codec))?;
+            t.SetUINT64(&MF_MT_FRAME_SIZE, tamano(1920, 1080))?;
+            t.SetUINT64(&MF_MT_FRAME_RATE, tamano(60, 1))?;
+            t.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+            let flujo = escritor.AddStream(&t)?;
+            escritor.SetInputMediaType(flujo, &t, None)?;
+            Ok(())
+        })()
+    };
+    let _ = std::fs::remove_file(&ruta);
+    r.is_ok()
+}
+
 /// Escribe el clip en `ruta` con el audio pedido. Devuelve los nombres de las pistas de audio en el
 /// orden del archivo ("Mezcla", "Juego", "Discord"…).
 pub fn escribir(ruta: &Path, clip: &Clip, audio: &AudioDelClip) -> Result<Vec<String>> {
     let primero = clip.video.first().ok_or_else(|| anyhow!("el clip está vacío"))?;
-    let encabezado = super::h264::encabezado(&primero.datos).ok_or_else(|| anyhow!("el primer cuadro no trae SPS/PPS"))?;
+    // El encabezado del formato sale del primer cuadro clave (H.264: SPS/PPS; HEVC: VPS/SPS/PPS).
+    let encabezado = match clip.formato.codec {
+        Codec::H264 => Some(super::h264::encabezado(&primero.datos).ok_or_else(|| anyhow!("el primer cuadro no trae SPS/PPS"))?),
+        Codec::Hevc => Some(super::h264::encabezado_hevc(&primero.datos).ok_or_else(|| anyhow!("el primer cuadro no trae VPS/SPS/PPS"))?),
+        Codec::Av1 => bail!("Windows no guarda AV1 en MP4"),
+    };
     let f = &clip.formato;
 
     // Las fuentes que van (activas y con algo grabado), la mezcla y, si se piden, las pistas separadas.
@@ -186,15 +224,17 @@ pub fn escribir(ruta: &Path, clip: &Clip, audio: &AudioDelClip) -> Result<Vec<St
 
         let tipo_video = MFCreateMediaType()?;
         tipo_video.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-        tipo_video.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
+        tipo_video.SetGUID(&MF_MT_SUBTYPE, &super::encoder::subtipo(f.codec))?;
         tipo_video.SetUINT64(&MF_MT_FRAME_SIZE, tamano(f.ancho, f.alto))?;
         tipo_video.SetUINT64(&MF_MT_FRAME_RATE, tamano(f.fps, 1))?;
         tipo_video.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, tamano(1, 1))?;
         tipo_video.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
         tipo_video.SetUINT32(&MF_MT_AVG_BITRATE, f.bitrate)?;
-        tipo_video.SetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &encabezado)?;
-        let flujo_video = escritor.AddStream(&tipo_video)?;
-        escritor.SetInputMediaType(flujo_video, &tipo_video, None)?;
+        if let Some(e) = &encabezado {
+            tipo_video.SetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, e)?;
+        }
+        let flujo_video = escritor.AddStream(&tipo_video).context("el MP4 no acepta el video")?;
+        escritor.SetInputMediaType(flujo_video, &tipo_video, None).context("el MP4 no acepta el formato del video")?;
 
         // Windows enumera las pistas del MP4 al revés y toca la primera que enumera: la mezcla se agrega última.
         // Para los demás reproductores (VLC, celulares…), después se marca como la única habilitada (pistas_mp4).
@@ -203,7 +243,7 @@ pub fn escribir(ruta: &Path, clip: &Clip, audio: &AudioDelClip) -> Result<Vec<St
             pistas.push(PistaDeAudio { flujo: agregar_pista_aac(&escritor, audio.bytes_por_segundo)?, pcm, escrito: 0 });
         }
 
-        escritor.BeginWriting()?;
+        escritor.BeginWriting().context("no se pudo empezar a escribir el MP4")?;
         for p in &clip.video {
             let t = p.pts - clip.inicio;
             for pista in &mut pistas {
@@ -213,7 +253,7 @@ pub fn escribir(ruta: &Path, clip: &Clip, audio: &AudioDelClip) -> Result<Vec<St
             if p.clave {
                 m.SetUINT32(&MFSampleExtension_CleanPoint, 1)?;
             }
-            escritor.WriteSample(flujo_video, &m)?;
+            escritor.WriteSample(flujo_video, &m).context("no se pudo escribir un cuadro")?;
         }
         for pista in &mut pistas {
             pista.escribir_hasta(&escritor, clip.fin - clip.inicio)?;

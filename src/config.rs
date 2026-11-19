@@ -135,6 +135,25 @@ pub enum PerfilH264 {
     Basico,
 }
 
+/// El formato del video. H.264 se ve en todos lados; HEVC y AV1 pesan menos con la misma calidad, pero no
+/// todos los programas los reproducen y necesitan una tarjeta que los comprima.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum Codec {
+    H264,
+    Hevc,
+    Av1,
+}
+
+impl Codec {
+    pub fn nombre(self) -> &'static str {
+        match self {
+            Codec::H264 => "H.264",
+            Codec::Hevc => "HEVC",
+            Codec::Av1 => "AV1",
+        }
+    }
+}
+
 /// Cuánto trabaja el encoder por cuadro (CODECAPI_AVEncCommonQualityVsSpeed).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum VelocidadEncoder {
@@ -175,6 +194,7 @@ pub struct VideoAvanzado {
     pub velocidad: VelocidadEncoder,
     /// Audio AAC en kbps (96, 128, 160 o 192).
     pub audio_kbps: u32,
+    pub codec: Codec,
 }
 
 impl Default for VideoAvanzado {
@@ -188,6 +208,7 @@ impl Default for VideoAvanzado {
             perfil: PerfilH264::Alto,
             velocidad: VelocidadEncoder::Automatica,
             audio_kbps: 192,
+            codec: Codec::H264,
         }
     }
 }
@@ -227,6 +248,7 @@ pub struct AjustesEncoder {
     pub gop: u32,
     pub perfil: PerfilH264,
     pub velocidad: VelocidadEncoder,
+    pub codec: Codec,
 }
 
 /// Con qué tarjeta de video se comprime el video (importa en laptops con dos tarjetas).
@@ -517,6 +539,7 @@ impl Config {
             gop: ((self.fps as f32 * a.clave_cada).round() as u32).max(1),
             perfil: a.perfil,
             velocidad: a.velocidad,
+            codec: a.codec,
         }
     }
 

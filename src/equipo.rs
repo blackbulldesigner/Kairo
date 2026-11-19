@@ -62,6 +62,10 @@ pub struct Equipo {
     pub monitores: Vec<Monitor>,
     /// Encoders H.264 por hardware que ofrece Windows (Media Foundation).
     pub encoders: Vec<String>,
+    /// Hay encoder HEVC por hardware (y Windows lo guarda en MP4): se puede elegir en Opciones avanzadas.
+    pub hevc: bool,
+    /// Windows puede reproducir HEVC ("Extensiones de video HEVC"): sin esto, Kairo no muestra esos clips.
+    pub hevc_se_ve: bool,
 }
 
 impl Equipo {
@@ -80,6 +84,8 @@ impl Equipo {
             gpus,
             monitores,
             encoders: encoders_hardware(),
+            hevc: hay_mft(MFT_CATEGORY_VIDEO_ENCODER, false, MFVideoFormat_HEVC, true) && crate::grabadora::mp4::acepta(crate::config::Codec::Hevc),
+            hevc_se_ve: hay_mft(MFT_CATEGORY_VIDEO_DECODER, true, MFVideoFormat_HEVC, false),
         }
     }
 
@@ -327,6 +333,26 @@ fn tarjetas_y_monitores() -> (Vec<Gpu>, Vec<Monitor>) {
     // El principal primero: es el que la gente llama "monitor 1".
     monitores.sort_by_key(|m| !m.principal);
     (gpus, monitores)
+}
+
+/// ¿Hay un MFT de esta categoría para este formato (de entrada o de salida)? `hardware`: solo por hardware.
+pub fn hay_mft(categoria: windows::core::GUID, de_entrada: bool, sub: windows::core::GUID, hardware: bool) -> bool {
+    unsafe {
+        let _ = MFStartup(MF_VERSION, MFSTARTUP_LITE);
+        let tipo = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: sub };
+        let (entrada, salida) = if de_entrada { (Some(&tipo as *const _), None) } else { (None, Some(&tipo as *const _)) };
+        let flags = if hardware { MFT_ENUM_FLAG_HARDWARE.0 } else { MFT_ENUM_FLAG_ALL.0 } | MFT_ENUM_FLAG_SORTANDFILTER.0;
+        let mut lista: *mut Option<IMFActivate> = std::ptr::null_mut();
+        let mut cantidad = 0u32;
+        let hay = MFTEnumEx(categoria, MFT_ENUM_FLAG(flags), entrada, salida, &mut lista, &mut cantidad).is_ok() && cantidad > 0;
+        if !lista.is_null() {
+            for a in std::slice::from_raw_parts_mut(lista, cantidad as usize) {
+                drop(a.take());
+            }
+            CoTaskMemFree(Some(lista as *const _));
+        }
+        hay
+    }
 }
 
 /// Nombres de los encoders H.264 por hardware (NVIDIA, AMD, Intel Quick Sync…).

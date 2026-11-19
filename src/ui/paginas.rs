@@ -6,7 +6,7 @@ use super::app::App;
 use super::tema::*;
 use super::widgets::*;
 use crate::config::{
-    self, Calidad, ControlBitrate, CualAtajo, FuenteAudio, ModoCaptura, OtrosSonidos, PerfilH264, Resolucion, TarjetaGrabacion, VelocidadEncoder,
+    self, Calidad, Codec, ControlBitrate, CualAtajo, FuenteAudio, ModoCaptura, OtrosSonidos, PerfilH264, Resolucion, TarjetaGrabacion, VelocidadEncoder,
 };
 use crate::equipo::Equipo;
 use crate::version;
@@ -197,7 +197,7 @@ impl App {
             });
         });
 
-        self.tarjeta_avanzado(ui, nativa);
+        self.tarjeta_avanzado(ui, nativa, eq);
 
         tarjeta(ui, "Rendimiento", |ui| {
             match eq {
@@ -248,7 +248,7 @@ impl App {
     }
 
     /// Grabación → Opciones avanzadas: bitrate, control, cuadros clave, perfil, velocidad del encoder y audio.
-    fn tarjeta_avanzado(&mut self, ui: &mut Ui, nativa: (u32, u32)) {
+    fn tarjeta_avanzado(&mut self, ui: &mut Ui, nativa: (u32, u32), eq: Option<&Equipo>) {
         let de_la_calidad = self.cfg.mbps_de_la_calidad(nativa);
         tarjeta(ui, "Opciones avanzadas", |ui| {
             let mut activo = self.cfg.avanzado.activo;
@@ -270,6 +270,31 @@ impl App {
                 return;
             }
             let a = &mut self.cfg.avanzado;
+            separador(ui);
+            // Formato: H.264 siempre; HEVC si la tarjeta lo comprime (y Windows lo guarda en MP4).
+            let hevc = eq.is_some_and(|e| e.hevc);
+            let hevc_se_ve = eq.is_some_and(|e| e.hevc_se_ve);
+            let desc = match a.codec {
+                _ if !hevc => "H.264: se ve en todos lados. Tu tarjeta no comprime HEVC.".to_string(),
+                Codec::Hevc if !hevc_se_ve => "HEVC: con la misma calidad pesa cerca de un 40 % menos, pero en esta PC falta «Extensiones de \
+                                               video HEVC» (Microsoft Store): sin eso, Kairo y las apps de Windows no los muestran. VLC sí."
+                    .to_string(),
+                Codec::Hevc => "HEVC: con la misma calidad pesa cerca de un 40 % menos (y usa menos RAM). Algunos celulares y \
+                                 apps no lo reproducen."
+                    .to_string(),
+                _ => "H.264: se ve en todos lados (celulares, Discord, WhatsApp). HEVC pesa menos, pero no todos lo reproducen.".to_string(),
+            };
+            fila(ui, "Formato del video", Some(&desc), |ui| {
+                let antes = a.codec;
+                ui.add_enabled_ui(hevc || a.codec != Codec::H264, |ui| {
+                    segmentos(ui, "codec", &mut a.codec, &[(Codec::H264, None, "H.264"), (Codec::Hevc, None, "HEVC")], None, 32.0);
+                });
+                // Con HEVC alcanza con menos bitrate para la misma calidad (y al revés).
+                if a.codec != antes {
+                    let factor = if a.codec == Codec::Hevc { 0.65 } else { 1.0 / 0.65 };
+                    a.mbps = ((a.mbps * factor * 2.0).round() / 2.0).clamp(config::MBPS_MIN, config::MBPS_MAX);
+                }
+            });
             separador(ui);
             let por_minuto = config::texto_bytes((a.mbps as f64 * 125_000.0 * 60.0) as u64);
             let desc = format!("Más alto = mejor imagen y clips más pesados. Un minuto de video ocupa unos {por_minuto}.");
@@ -308,17 +333,19 @@ impl App {
                     segmentos(ui, "clave", &mut a.clave_cada, &[(0.5, None, "0,5 s"), (1.0, None, "1 s"), (2.0, None, "2 s")], None, 32.0);
                 },
             );
-            separador(ui);
-            fila(ui, "Perfil H.264", Some("«Alto» comprime mejor. «Básico» solo si un celular o un reproductor viejo no abre tus clips."), |ui| {
-                segmentos(
-                    ui,
-                    "perfil",
-                    &mut a.perfil,
-                    &[(PerfilH264::Alto, None, "Alto"), (PerfilH264::Principal, None, "Principal"), (PerfilH264::Basico, None, "Básico")],
-                    None,
-                    32.0,
-                );
-            });
+            if a.codec == Codec::H264 {
+                separador(ui);
+                fila(ui, "Perfil H.264", Some("«Alto» comprime mejor. «Básico» solo si un celular o un reproductor viejo no abre tus clips."), |ui| {
+                    segmentos(
+                        ui,
+                        "perfil",
+                        &mut a.perfil,
+                        &[(PerfilH264::Alto, None, "Alto"), (PerfilH264::Principal, None, "Principal"), (PerfilH264::Basico, None, "Básico")],
+                        None,
+                        32.0,
+                    );
+                });
+            }
             separador(ui);
             fila(
                 ui,

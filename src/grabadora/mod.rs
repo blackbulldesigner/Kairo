@@ -12,7 +12,7 @@ mod encoder;
 pub mod h264;
 pub mod juego;
 mod mouse;
-mod mp4;
+pub mod mp4;
 pub mod reloj;
 pub mod sonido;
 
@@ -267,7 +267,21 @@ fn sesion_video(
     let hardware = if forzado("KAIRO_PROCESADOR", "1") {
         Err(anyhow!("forzado con KAIRO_PROCESADOR"))
     } else {
-        encoder::Encoder::abrir(&cap.dispositivo, cap.luid, cap.ancho, cap.alto, &ajustes(&cfg, &cap))
+        let mut pedidos = ajustes(&cfg, &cap);
+        // Si Windows no puede guardar ese formato en MP4 (AV1 en Windows 10), directamente H.264.
+        if !mp4::acepta(pedidos.codec) {
+            log(&format!("Windows no guarda {} en MP4: se graba en H.264", pedidos.codec.nombre()));
+            pedidos.codec = crate::config::Codec::H264;
+        }
+        encoder::Encoder::abrir(&cap.dispositivo, cap.luid, cap.ancho, cap.alto, &pedidos).or_else(|e| {
+            // Si la tarjeta no puede con HEVC o AV1, se graba en H.264 (que tienen todas).
+            if pedidos.codec == crate::config::Codec::H264 {
+                return Err(e);
+            }
+            log(&format!("no se puede grabar en {} ({e:#}): se graba en H.264", pedidos.codec.nombre()));
+            let h264 = crate::config::AjustesEncoder { codec: crate::config::Codec::H264, ..pedidos };
+            encoder::Encoder::abrir(&cap.dispositivo, cap.luid, cap.ancho, cap.alto, &h264)
+        })
     };
     let mut enc = match hardware {
         Ok(e) => codificador::Codificador::Hardware(e),
@@ -287,7 +301,7 @@ fn sesion_video(
     };
     let (ancho, alto) = enc.tamano();
     let bitrate = ajustes(&cfg, &cap).bitrate;
-    let formato = FormatoVideo { ancho, alto, fps: cfg.fps, bitrate, encoder: enc.nombre().to_string() };
+    let formato = FormatoVideo { ancho, alto, fps: cfg.fps, bitrate, encoder: enc.nombre().to_string(), codec: enc.codec() };
     let detalle = format!("{ancho}×{alto} a {} fps · {} · {} · {}", cfg.fps, enc.nombre(), cap.metodo, cap.nombre_tarjeta);
     log(&format!("grabando {} (monitor {} de {}×{})", detalle, monitor.id, cap.ancho_monitor, cap.alto_monitor));
     if let Ok(mut b) = buffer.lock() {

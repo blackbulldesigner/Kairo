@@ -26,6 +26,14 @@ impl Codificador {
         }
     }
 
+    /// El formato en que comprime (el de procesador, siempre H.264).
+    pub fn codec(&self) -> crate::config::Codec {
+        match self {
+            Codificador::Hardware(e) => e.codec,
+            Codificador::Procesador(_) => crate::config::Codec::H264,
+        }
+    }
+
     pub fn tamano(&self) -> (u32, u32) {
         match self {
             Codificador::Hardware(e) => (e.ancho, e.alto),
@@ -165,7 +173,7 @@ impl EncoderProcesador {
             muestra.SetSampleDuration(self.dur)?;
             self.mft.ProcessInput(0, &muestra, 0)?;
             loop {
-                match sacar_paquete(&self.mft, self.dur)? {
+                match sacar_paquete(&self.mft, self.dur, crate::config::Codec::H264)? {
                     Salida::Paquete(p) => self.listos.push(p),
                     Salida::Reintentar => continue,
                     Salida::NadaMas => break,

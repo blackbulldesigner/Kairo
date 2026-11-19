@@ -96,6 +96,12 @@ impl Reproductor {
         if info.ancho == 0 {
             return Err(anyhow!("el archivo no tiene video"));
         }
+        if info.hevc && !crate::equipo::hay_mft(MFT_CATEGORY_VIDEO_DECODER, true, MFVideoFormat_HEVC, false) {
+            return Err(anyhow!(
+                "está en HEVC y Windows no tiene con qué reproducirlo. Instala «Extensiones de video HEVC» desde \
+                 Microsoft Store, o ábrelo con VLC"
+            ));
+        }
         let c = Arc::new(Compartido {
             salir: AtomicBool::new(false),
             reproduciendo: AtomicBool::new(false),

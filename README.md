@@ -35,7 +35,9 @@ PCs de escritorio.
   Nunca borra favoritos ni videos que no hizo Kairo.
 - En Grabación puedes elegir si el mouse aparece en tus clips (**Mostrar el mouse**, apagado de fábrica).
 - En Grabación → **Opciones avanzadas** puedes elegir el bitrate, si es variable o constante, cada cuánto va
-  un cuadro clave, el perfil H.264, la velocidad del encoder y la calidad del audio.
+  un cuadro clave, el perfil H.264, la velocidad del encoder, la calidad del audio y el formato: **HEVC** pesa
+  cerca de un 40 % menos con la misma calidad (si la tarjeta lo comprime), pero Windows necesita "Extensiones de
+  video HEVC" para mostrarlo (VLC no). AV1 no está: el MP4 de Windows 10 no lo termina de escribir.
 - En Sistema puedes activar **Iniciar con Windows**.
 - **Acerca de** muestra la versión exacta del exe (commit y fecha) y la lista de novedades. Debajo del nombre,
   en el menú, siempre se ve la versión corta (por ejemplo `v0.2.0 · b820923`).

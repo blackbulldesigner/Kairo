@@ -15,7 +15,16 @@ use windows::Win32::System::Com::CoTaskMemFree;
 use super::buffer::PaqueteVideo;
 use super::h264;
 use super::reloj::SEGUNDO;
-use crate::config::{AjustesEncoder, ControlBitrate, PerfilH264};
+use crate::config::{AjustesEncoder, Codec, ControlBitrate, PerfilH264};
+
+/// El subtipo de Media Foundation de cada formato.
+pub(crate) fn subtipo(c: Codec) -> windows::core::GUID {
+    match c {
+        Codec::H264 => MFVideoFormat_H264,
+        Codec::Hevc => MFVideoFormat_HEVC,
+        Codec::Av1 => MFVideoFormat_AV1,
+    }
+}
 
 /// El perfil H.264 para Media Foundation.
 pub(super) fn perfil(p: PerfilH264) -> u32 {
@@ -36,6 +45,7 @@ pub struct Encoder {
     dur: i64,
     /// Cuántos cuadros pidió el encoder y todavía no recibió.
     pedidos: u32,
+    pub codec: Codec,
 }
 
 pub(super) fn tamano(a: u32, b: u32) -> u64 {
@@ -65,9 +75,9 @@ impl Encoder {
     /// Abre el encoder por hardware de la tarjeta `luid`. Si el tamaño no le gusta (algunos piden
     /// múltiplos de 16), prueba con el múltiplo de 16 más cercano hacia abajo.
     pub fn abrir(dispositivo: &ID3D11Device, luid: LUID, ancho: u32, alto: u32, ajustes: &AjustesEncoder) -> Result<Self> {
-        let candidatos = unsafe { encoders_de(luid)? };
+        let candidatos = unsafe { encoders_de(luid, subtipo(ajustes.codec))? };
         if candidatos.is_empty() {
-            bail!("Tu tarjeta de video no tiene encoder H.264 por hardware (la grabación por procesador llega más adelante).");
+            bail!("tu tarjeta de video no tiene encoder {} por hardware", ajustes.codec.nombre());
         }
         let mut ultimo_error = None;
         for act in &candidatos {
@@ -128,16 +138,26 @@ impl Encoder {
 
         let salida = MFCreateMediaType()?;
         salida.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-        salida.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
+        salida.SetGUID(&MF_MT_SUBTYPE, &subtipo(ajustes.codec))?;
         salida.SetUINT32(&MF_MT_AVG_BITRATE, bitrate)?;
         salida.SetUINT64(&MF_MT_FRAME_SIZE, tamano(ancho, alto))?;
         salida.SetUINT64(&MF_MT_FRAME_RATE, tamano(fps, 1))?;
         salida.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, tamano(1, 1))?;
         salida.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-        salida.SetUINT32(&MF_MT_MPEG2_PROFILE, perfil(ajustes.perfil))?;
+        let perfil_pedido = match ajustes.codec {
+            Codec::H264 => perfil(ajustes.perfil),
+            Codec::Hevc => eAVEncH265VProfile_Main_420_8.0 as u32,
+            Codec::Av1 => eAVEncAV1VProfile_Main_420_8.0 as u32,
+        };
+        salida.SetUINT32(&MF_MT_MPEG2_PROFILE, perfil_pedido)?;
         color_bt709(&salida)?;
         if mft.SetOutputType(0, &salida, 0).is_err() {
-            salida.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32)?;
+            // H.264: con perfil Main. HEVC y AV1: con el perfil que el encoder tenga por defecto.
+            if ajustes.codec == Codec::H264 {
+                salida.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32)?;
+            } else {
+                salida.DeleteItem(&MF_MT_MPEG2_PROFILE)?;
+            }
             mft.SetOutputType(0, &salida, 0).with_context(|| format!("{nombre} no acepta {ancho}×{alto} a {fps} fps"))?;
         }
 
@@ -169,7 +189,7 @@ impl Encoder {
         mft.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
         mft.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
         let eventos: IMFMediaEventGenerator = mft.cast()?;
-        Ok(Self { mft, eventos, _administrador: administrador, nombre, ancho, alto, dur: SEGUNDO / fps as i64, pedidos: 0 })
+        Ok(Self { mft, eventos, _administrador: administrador, nombre, ancho, alto, dur: SEGUNDO / fps as i64, pedidos: 0, codec: ajustes.codec })
     }
 
     /// Atiende los eventos pendientes del encoder y deja en `salida` los paquetes que estén listos.
@@ -219,7 +239,7 @@ impl Encoder {
     }
 
     unsafe fn sacar(&mut self, salida: &mut Vec<PaqueteVideo>) -> Result<()> {
-        if let Salida::Paquete(p) = sacar_paquete(&self.mft, self.dur)? {
+        if let Salida::Paquete(p) = sacar_paquete(&self.mft, self.dur, self.codec)? {
             salida.push(p);
         }
         Ok(())
@@ -238,7 +258,7 @@ pub(super) enum Salida {
 /// Saca un paquete del encoder (sirve para el de hardware y el de procesador). Los cuadros clave
 /// salen siempre con SPS/PPS: si el encoder no los pone, se agregan desde su formato de salida, así
 /// un clip puede empezar en cualquier cuadro clave.
-pub(super) unsafe fn sacar_paquete(mft: &IMFTransform, dur_por_defecto: i64) -> Result<Salida> {
+pub(super) unsafe fn sacar_paquete(mft: &IMFTransform, dur_por_defecto: i64, codec: Codec) -> Result<Salida> {
     let info = mft.GetOutputStreamInfo(0)?;
     let provee = info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0) as u32 != 0;
     let muestra = if provee {
@@ -274,7 +294,14 @@ pub(super) unsafe fn sacar_paquete(mft: &IMFTransform, dur_por_defecto: i64) -> 
     buffer.Lock(&mut p, None, Some(&mut largo))?;
     let mut bytes = std::slice::from_raw_parts(p, largo as usize).to_vec();
     buffer.Unlock()?;
-    if clave && !h264::tiene_encabezado(&bytes) {
+    // Cada cuadro clave lleva su encabezado (SPS/PPS; en HEVC también VPS): el clip puede empezar en cualquiera.
+    // AV1 lleva el suyo en el cuadro mismo.
+    let falta = match codec {
+        Codec::H264 => !h264::tiene_encabezado(&bytes),
+        Codec::Hevc => !h264::tiene_encabezado_hevc(&bytes),
+        Codec::Av1 => false,
+    };
+    if clave && falta {
         if let Some(mut h) = encabezado_del_formato(mft) {
             h.extend_from_slice(&bytes);
             bytes = h;
@@ -313,8 +340,8 @@ pub(super) unsafe fn color_bt709(t: &IMFMediaType) -> Result<()> {
 }
 
 /// Encoders H.264 por hardware, primero los de la tarjeta `luid`.
-unsafe fn encoders_de(luid: LUID) -> Result<Vec<IMFActivate>> {
-    let tipo = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: MFVideoFormat_H264 };
+unsafe fn encoders_de(luid: LUID, sub: windows::core::GUID) -> Result<Vec<IMFActivate>> {
+    let tipo = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: sub };
     let mut lista: *mut Option<IMFActivate> = std::ptr::null_mut();
     let mut cantidad = 0u32;
     let flags = MFT_ENUM_FLAG(MFT_ENUM_FLAG_HARDWARE.0 | MFT_ENUM_FLAG_SORTANDFILTER.0);

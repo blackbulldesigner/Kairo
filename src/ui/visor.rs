@@ -547,7 +547,10 @@ impl App {
         }
         if let Some(e) = &v.error {
             if v.reproductor.is_none() {
-                p.text(caja.center(), Align2::CENTER_CENTER, e, FontId::proportional(13.5), ROJO);
+                // En varias líneas, centrado (el mensaje de HEVC es largo).
+                let g = p.layout(e.clone(), FontId::proportional(13.5), ROJO, (caja.width() - 60.0).max(100.0));
+                let pos = caja.center() - g.size() / 2.0 - vec2(0.0, 18.0);
+                p.galley(pos, g, ROJO);
             }
         }
         if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
@@ -763,6 +766,10 @@ impl App {
 
 fn panel_ver(ui: &mut Ui, v: &Visor) {
     if v.reproductor.is_none() {
+        // Si Kairo no lo puede mostrar (por ejemplo, HEVC sin la extensión), con el programa predeterminado.
+        if boton(ui, Some(icono::ENLACE), "Abrir con otro programa", Estilo::Secundario, true).clicked() {
+            crate::abrir::archivo(&v.ruta);
+        }
         return;
     }
     nota(ui, "Espacio: reproducir o pausar · ← →: 5 segundos · Esc: volver a la biblioteca. En «Editar» puedes recortarlo y cambiar el volumen de cada pista.");

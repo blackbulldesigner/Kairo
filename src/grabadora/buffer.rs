@@ -38,6 +38,8 @@ pub struct FormatoVideo {
     pub fps: u32,
     pub bitrate: u32,
     pub encoder: String,
+    /// Con qué formato se comprimió (lo que pidió la configuración o, si la tarjeta no pudo, H.264).
+    pub codec: crate::config::Codec,
 }
 
 /// Pistas de audio del buffer: las tres fijas y, desde `PISTA_PROGRAMAS`, una por programa elegido

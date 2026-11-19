@@ -103,6 +103,8 @@ pub struct InfoClip {
     pub fps: f64,
     pub pistas_audio: usize,
     pub bitrate_video: u32,
+    /// HEVC (los demás clips de Kairo son H.264).
+    pub hevc: bool,
 }
 
 pub fn info(ruta: &Path) -> Result<InfoClip> {
@@ -119,6 +121,7 @@ pub fn info(ruta: &Path) -> Result<InfoClip> {
             i.alto = s as u32;
             i.fps = (r >> 32) as f64 / ((r & 0xFFFF_FFFF) as f64).max(1.0);
             i.bitrate_video = t.GetUINT32(&MF_MT_AVG_BITRATE).unwrap_or(0);
+            i.hevc = t.GetGUID(&MF_MT_SUBTYPE).is_ok_and(|g| g == MFVideoFormat_HEVC);
         }
         Ok(i)
     }

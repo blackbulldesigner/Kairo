@@ -4,7 +4,7 @@
 //!   que quedar en la pista del juego y no en la del resto del sistema; activa las pistas separadas);
 //!   `solo-juego` graba en modo "Solo el juego"; `programa` suma este exe como programa elegido (el tono tiene
 //!   que quedar en su pista); `avanzado` graba con opciones avanzadas fuera de lo normal (6 Mbps constantes,
-//!   cuadro clave cada 2 s, perfil Básico, velocidad Rápida, audio a 128 kbps).
+//!   cuadro clave cada 2 s, perfil Básico, velocidad Rápida, audio a 128 kbps); `hevc` o `av1` graban en ese formato.
 //! - `--prueba-leer <archivo.mp4> [cuadro.png]`: abre el MP4 como lo haría un reproductor, cuenta cuadros,
 //!   mide cada pista de audio y guarda una imagen del cuadro del medio.
 //! - `--prueba-juego <segundos>`: muestra qué detecta como juego, dos veces por segundo.
@@ -65,6 +65,30 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
         let n = |i: usize| args.get(k + i).and_then(|s| s.parse::<usize>().ok());
         return Some(informar(prueba_tira(args.get(k + 1)?, args.get(k + 2)?, n(3)?, n(4)?, n(5)?)));
     }
+    if let Some(k) = pos("--prueba-recorte") {
+        // Recorta del segundo 1 al 3 sin decodificar (sirve también para HEVC sin la extensión de Windows).
+        let ruta = Path::new(args.get(k + 1)?);
+        let r = (|| -> Result<()> {
+            let info = crate::medios::info(ruta)?;
+            let destino = crate::medios::ruta_libre(ruta, "editado");
+            let pedido = crate::medios::exportar::Pedido {
+                origen: ruta.to_path_buf(),
+                destino: destino.clone(),
+                inicio: 1.0,
+                fin: 3.0,
+                volumenes: vec![1.0; info.pistas_audio],
+                nombres: crate::datos_clip::leer(ruta).map(|d| d.pistas).unwrap_or_default(),
+            };
+            let res = crate::medios::exportar::exportar(&pedido, &|_| {}, &std::sync::atomic::AtomicBool::new(false))?;
+            let i2 = crate::medios::info(&destino)?;
+            println!("recorte: empieza a los {:.2} s, {:.2} s según el archivo, {} pistas, ¿HEVC? {}", res.inicio_real, i2.duracion, i2.pistas_audio, i2.hevc);
+            Ok(())
+        })();
+        return Some(informar(r));
+    }
+    if pos("--prueba-codecs").is_some() {
+        return Some(informar(prueba_codecs()));
+    }
     if let Some(k) = pos("--marcar-mezcla") {
         let r = crate::pistas_mp4::marcar_mezcla(Path::new(args.get(k + 1)?)).map(|c| println!("¿cambió algo? {c}"));
         return Some(informar(r));
@@ -76,6 +100,47 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
         return Some(informar(prueba_actualizacion(args.get(k + 1).map(|s| s.as_str()))));
     }
     None
+}
+
+/// Qué encoders (por hardware) y decodificadores (cualquiera) hay para H.264, HEVC y AV1.
+fn prueba_codecs() -> Result<()> {
+    iniciar_mf()?;
+    unsafe fn listar(categoria: windows::core::GUID, entrada: bool, sub: windows::core::GUID, flags: i32) -> Vec<String> {
+        let tipo = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: sub };
+        let mut lista: *mut Option<IMFActivate> = std::ptr::null_mut();
+        let mut cantidad = 0u32;
+        let (e, s) = if entrada { (Some(&tipo as *const _), None) } else { (None, Some(&tipo as *const _)) };
+        let mut v = Vec::new();
+        if MFTEnumEx(categoria, MFT_ENUM_FLAG(flags), e, s, &mut lista, &mut cantidad).is_ok() && !lista.is_null() {
+            for a in std::slice::from_raw_parts_mut(lista, cantidad as usize) {
+                if let Some(act) = a.take() {
+                    let mut texto = windows::core::PWSTR::null();
+                    let mut largo = 0u32;
+                    if act.GetAllocatedString(&MFT_FRIENDLY_NAME_Attribute, &mut texto, &mut largo).is_ok() {
+                        v.push(texto.to_string().unwrap_or_default());
+                        windows::Win32::System::Com::CoTaskMemFree(Some(texto.0 as *const _));
+                    }
+                }
+            }
+            windows::Win32::System::Com::CoTaskMemFree(Some(lista as *const _));
+        }
+        v
+    }
+    let todos = MFT_ENUM_FLAG_ALL.0 | MFT_ENUM_FLAG_SORTANDFILTER.0;
+    let hardware = MFT_ENUM_FLAG_HARDWARE.0 | MFT_ENUM_FLAG_SORTANDFILTER.0;
+    for (nombre, sub) in [("H.264", MFVideoFormat_H264), ("HEVC", MFVideoFormat_HEVC), ("AV1", MFVideoFormat_AV1)] {
+        let codec = match nombre {
+            "HEVC" => crate::config::Codec::Hevc,
+            "AV1" => crate::config::Codec::Av1,
+            _ => crate::config::Codec::H264,
+        };
+        println!("{nombre}: ¿el MP4 de Windows lo acepta? {}", crate::grabadora::mp4::acepta(codec));
+        unsafe {
+            println!("{nombre}: encoders por hardware {:?}", listar(MFT_CATEGORY_VIDEO_ENCODER, false, sub, hardware));
+            println!("{nombre}: decodificadores {:?}", listar(MFT_CATEGORY_VIDEO_DECODER, true, sub, todos));
+        }
+    }
+    Ok(())
 }
 
 /// `--prueba-tira <mp4> <png> <y> <alto> <n>`: `n` cuadros repartidos en el clip, de cada uno solo la franja
@@ -402,7 +467,16 @@ fn prueba_grabar(segundos: u32, ruta: &str, o: Opciones) -> Result<()> {
             perfil: PerfilH264::Basico,
             velocidad: VelocidadEncoder::Rapida,
             audio_kbps: 128,
+            codec: crate::config::Codec::H264,
         };
+    }
+    // `hevc` o `av1`: grabar en ese formato (opciones avanzadas).
+    for (nombre, codec) in [("hevc", crate::config::Codec::Hevc), ("av1", crate::config::Codec::Av1)] {
+        if std::env::args().any(|a| a == nombre) {
+            cfg.avanzado.activo = true;
+            cfg.avanzado.mbps = cfg.mbps_de_la_calidad((1920, 1080));
+            cfg.avanzado.codec = codec;
+        }
     }
     let g = Grabadora::iniciar(&cfg);
     std::thread::sleep(Duration::from_millis(segundos as u64 * 500));

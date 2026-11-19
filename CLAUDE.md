@@ -75,6 +75,9 @@ Ver `README.md` para el plan por fases.
   pistas separadas: el tono tiene que quedar en la pista del juego y no en la del sistema. `solo-juego` sin
   juego adelante tiene que dar un clip negro. `--prueba-juego <s>` muestra la detección y los programas abiertos.
   `programa` suma `kairo.exe` como programa elegido: el tono tiene que quedar en su pista y en la mezcla.
+  `hevc` graba en HEVC (`av1` cae a H.264: el MP4 de Windows 10 acepta la pista AV1 pero no termina el archivo, ni
+  con el sequence header ni con av1C). `--prueba-codecs` lista encoders y decodificadores; `--prueba-recorte <mp4>`
+  recorta sin decodificar (sirve con HEVC sin la extensión). Para ver un HEVC sin la extensión: VLC.
   `largo` deja el clip normal en 5 s y el largo en lo pedido (el buffer tiene que guardar lo del largo).
   `mouse` graba con "Mostrar el mouse" (con `--prueba-tira` a la altura del puntero se ve si quedó dibujado).
   Ojo: `con.mp4` no sirve de nombre de prueba (CON es un nombre reservado de Windows).
