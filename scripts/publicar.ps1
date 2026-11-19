@@ -20,8 +20,10 @@ try {
     git fetch --tags --quiet
     if (git tag --list $tag) { throw "La versión $tag ya está publicada: sube 'version' en Cargo.toml." }
 
-    # Notas: los commits desde el último release (o los últimos 15 si es el primero).
+    # Notas: los commits desde el último release (o los últimos 15 si es el primero). git escribe en UTF-8:
+    # sin esto, Windows PowerShell rompe los acentos ("Grabaci├│n").
     if (-not $Notas) {
+        [Console]::OutputEncoding = [Text.Encoding]::UTF8
         # (En Windows PowerShell, un error de git con 2>$null corta el script: por eso el try.)
         $anterior = try { git describe --tags --abbrev=0 2>$null } catch { $null }
         $rango = if ($anterior) { "$anterior..HEAD" } else { "-15" }
@@ -37,7 +39,10 @@ try {
     # Formato de sha256sum: "<hash>  <archivo>".
     [IO.File]::WriteAllText((Join-Path $raiz "$exe.sha256"), "$hash  KairoSetup-$version.exe`n")
 
-    gh release create $tag $exe "$exe.sha256" --title "Kairo $version" --notes $Notas --target (git rev-parse HEAD)
+    # Las notas van en un archivo (UTF-8 sin BOM): Windows PowerShell parte los argumentos que tienen comillas.
+    $archivoNotas = Join-Path $raiz "dist\notas-$version.md"
+    [IO.File]::WriteAllText($archivoNotas, $Notas, (New-Object Text.UTF8Encoding $false))
+    gh release create $tag $exe "$exe.sha256" --title "Kairo $version" --notes-file $archivoNotas --target (git rev-parse HEAD)
     if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el release." }
     git fetch --tags --quiet
     Write-Host "Publicado: Kairo $version ($tag). Los Kairo instalados lo van a detectar solos."
