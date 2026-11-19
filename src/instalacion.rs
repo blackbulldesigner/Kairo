@@ -239,18 +239,34 @@ pub fn instalar(op: &Opciones, paso: &dyn Fn(&str)) -> Result<PathBuf> {
 }
 
 /// `--instalar --sin-ventana`: actualiza el Kairo instalado sin preguntar nada, conservando lo que ya
-/// tenía (acceso en el escritorio, inicio con Windows). No lo abre. Devuelve si salió bien.
-pub fn actualizar_sin_ventana() -> bool {
+/// tenía (acceso en el escritorio, inicio con Windows). Con `abrir` (la actualización desde Kairo), al
+/// terminar lo abre, y si algo falla lo avisa y abre el que había. Devuelve si salió bien.
+pub fn actualizar_sin_ventana(abrir: bool) -> bool {
     let d = destinos();
     let op = Opciones {
         escritorio: d.acceso_escritorio.exists(),
         inicio_windows: crate::autoinicio::activo(),
     };
     match instalar(&op, &|_| {}) {
-        Ok(_) => true,
+        Ok(exe) => {
+            if abrir && !d.prueba {
+                abrir_instalado(&exe);
+            }
+            true
+        }
         Err(e) => {
             log(&format!("no se pudo actualizar: {e:#}"));
             eprintln!("{e:#}");
+            if abrir && !d.prueba {
+                use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONWARNING};
+                let texto = format!("No se pudo actualizar Kairo: {e:#}");
+                unsafe {
+                    MessageBoxW(HWND::default(), &HSTRING::from(texto), w!("Actualizar Kairo"), MB_ICONWARNING);
+                }
+                if d.exe().exists() {
+                    abrir_instalado(&d.exe());
+                }
+            }
             false
         }
     }

@@ -44,6 +44,9 @@ Ver `README.md` para el plan por fases.
   llama `KairoSetup…` o con `--instalar`; `--desinstalar`).
 - `src/instalacion.rs` + `src/ui/instalador.rs`: instalar solo para el usuario (sin administrador), accesos,
   entrada en "Aplicaciones instaladas" (HKCU) y desinstalar. `build.rs` pone el ícono y la versión en el exe.
+- `src/actualizacion.rs` (+ `src/red.rs`, WinHTTP y SHA-256 de Windows; `src/ui/actualizar.rs`): busca el último
+  Release de GitHub, avisa (globo de la bandeja, menú, ventana) y actualiza con el KairoSetup verificado.
+  Publicar es `scripts\publicar.ps1`: solo cuando la persona lo pida (es público).
 - `src/bandeja.rs`: grabadora en la bandeja (ícono, menú, atajos globales, mensajes `WM_APP+n` de los ajustes).
 - `src/grabadora/`: `captura.rs` (Desktop Duplication + NV12 en GPU), `encoder.rs` (H.264 por hardware,
   asíncrono), `audio.rs` (WASAPI loopback), `buffer.rs` (RAM), `mp4.rs` (sink writer), `mod.rs` (hilos).
@@ -75,3 +78,6 @@ Ver `README.md` para el plan por fases.
 - El instalador se prueba con `KAIRO_PRUEBA_INSTALACION=<carpeta>` (todo queda ahí y usa otra clave del
   registro): `--prueba-instalar`, `--prueba-desinstalar` y `--captura-instalador <png>`. Sin esa variable
   instala en la PC de verdad: nunca probar así. Al terminar, borrar la carpeta de prueba.
+- `--prueba-actualizacion [api]` busca el release de Kairo y, con la API de otro repositorio (por ejemplo
+  `https://api.github.com/repos/cli/cli/releases/latest`), baja su archivo más chico y comprueba el SHA-256.
+  `KAIRO_CAPTURA_VERSION=0.9.0` hace que `--captura-ui` muestre el aviso de una versión nueva.

@@ -1,6 +1,7 @@
 //! Ventana de ajustes. Es un proceso aparte de la grabadora: solo existe mientras la tienes abierta,
 //! así que no pesa nada mientras juegas.
 
+mod actualizar;
 mod app;
 pub mod biblioteca;
 pub mod captura;

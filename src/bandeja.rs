@@ -30,12 +30,17 @@ pub const WM_RECARGAR: u32 = WM_APP + 2;
 /// wparam 1 = soltar los atajos globales (mientras se elige uno nuevo); 0 = volver a tomarlos.
 pub const WM_SUSPENDER_ATAJOS: u32 = WM_APP + 3;
 const WM_CLIP_LISTO: u32 = WM_APP + 4;
+/// El hilo de actualizaciones encontró una versión nueva (de la que todavía no se avisó).
+const WM_ACTUALIZACION: u32 = WM_APP + 5;
+/// Clic en el globo de aviso (llega en el lparam de WM_BANDEJA).
+const NIN_BALLOONUSERCLICK: u32 = WM_USER + 5;
 
 const ID_GUARDAR: usize = 1;
 const ID_PAUSA: usize = 2;
 const ID_CARPETA: usize = 3;
 const ID_AJUSTES: usize = 4;
 const ID_SALIR: usize = 5;
+const ID_ACTUALIZAR: usize = 6;
 const TEMPORIZADOR: usize = 1;
 
 static MSG_BARRA_DE_TAREAS: AtomicU32 = AtomicU32::new(0);
@@ -56,6 +61,8 @@ struct Bandeja {
     error_avisado: Option<String>,
     /// La laptop está desenchufada (en escritorio, siempre false).
     en_bateria: bool,
+    /// El último globo fue el de una versión nueva (un clic abre Acerca de).
+    globo_de_actualizacion: bool,
 }
 
 /// ¿Es una laptop funcionando con la batería?
@@ -115,6 +122,7 @@ fn cambia_la_grabacion(a: &Config, b: &Config) -> bool {
     x.atajo_guardar = b.atajo_guardar.clone();
     x.atajo_pausa = b.atajo_pausa.clone();
     x.atajo_carpeta = b.atajo_carpeta.clone();
+    x.buscar_actualizaciones = b.buscar_actualizaciones;
     x.audio_juego.volumen = b.audio_juego.volumen;
     x.audio_sistema.volumen = b.audio_sistema.volumen;
     x.audio_mic.volumen = b.audio_mic.volumen;
@@ -177,7 +185,8 @@ impl Bandeja {
         let _ = Shell_NotifyIconW(NIM_MODIFY, &d);
     }
 
-    unsafe fn globo(&self, titulo: &str, texto: &str, advertencia: bool) {
+    unsafe fn globo(&mut self, titulo: &str, texto: &str, advertencia: bool) {
+        self.globo_de_actualizacion = false;
         let mut d = self.datos_icono();
         d.uFlags = NIF_INFO;
         copiar(&mut d.szInfoTitle, titulo);
@@ -346,6 +355,16 @@ impl Bandeja {
         }
     }
 
+    unsafe fn avisar_actualizacion(&mut self) {
+        let Some(d) = crate::actualizacion::conocida() else { return };
+        self.globo(
+            "Hay una versión nueva de Kairo",
+            &format!("Kairo {} ya está disponible. Haz clic para actualizar (tus ajustes y tus clips no se tocan).", d.version),
+            false,
+        );
+        self.globo_de_actualizacion = true;
+    }
+
     unsafe fn cerrar(mut self) {
         self.detener_grabadora();
         let _ = Shell_NotifyIconW(NIM_DELETE, &self.datos_icono());
@@ -366,9 +385,42 @@ fn id_atajo(c: CualAtajo) -> i32 {
 
 /// Abre la ventana de ajustes (un proceso aparte del mismo exe).
 pub fn abrir_ajustes() {
+    abrir_ajustes_en(None);
+}
+
+/// Abre la ventana de ajustes en una página ("acerca", "biblioteca"…).
+fn abrir_ajustes_en(pagina: Option<&str>) {
     if let Ok(exe) = std::env::current_exe() {
-        let _ = std::process::Command::new(exe).arg("--ajustes").spawn();
+        let mut c = std::process::Command::new(exe);
+        c.arg("--ajustes");
+        if let Some(p) = pagina {
+            c.args(["--pagina", p]);
+        }
+        let _ = c.spawn();
     }
+}
+
+/// Busca versiones nuevas en un hilo que casi siempre duerme: un minuto después de arrancar y después cada
+/// hora mira si pasó un día desde la última consulta. Si hay una nueva, avisa una sola vez.
+fn vigilar_actualizaciones(hwnd: HWND) {
+    let hwnd = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        crate::actualizacion::limpiar_descargas();
+        loop {
+            if Config::cargar().buscar_actualizaciones {
+                if let Some(d) = crate::actualizacion::revisar(std::time::Duration::from_secs(24 * 3600)) {
+                    if crate::actualizacion::marcar_avisada(&d.version) {
+                        log(&format!("hay una versión nueva: {}", d.version));
+                        unsafe {
+                            let _ = PostMessageW(HWND(hwnd as *mut _), WM_ACTUALIZACION, WPARAM(0), LPARAM(0));
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    });
 }
 
 /// Abre la grabadora en la bandeja sin ventanas.
@@ -409,6 +461,7 @@ unsafe fn accion(hwnd: HWND, id: usize) {
             con_app(|b| abrir_carpeta(&b.cfg));
         }
         ID_AJUSTES => abrir_ajustes(),
+        ID_ACTUALIZAR => abrir_ajustes_en(Some("acerca")),
         ID_SALIR => {
             let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
@@ -427,6 +480,9 @@ unsafe fn mostrar_menu(hwnd: HWND) {
     item(ID_CARPETA, "Abrir la carpeta de clips");
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     item(ID_AJUSTES, "Ajustes…");
+    if let Some(d) = crate::actualizacion::conocida() {
+        item(ID_ACTUALIZAR, &format!("Actualizar a Kairo {}…", d.version));
+    }
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     item(ID_SALIR, "Salir de Kairo");
     let _ = SetMenuDefaultItem(menu, ID_AJUSTES as u32, 0);
@@ -448,6 +504,11 @@ unsafe extern "system" fn procedimiento(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             match lp.0 as u32 {
                 WM_LBUTTONUP | WM_LBUTTONDBLCLK => abrir_ajustes(),
                 WM_RBUTTONUP | WM_CONTEXTMENU => mostrar_menu(hwnd),
+                NIN_BALLOONUSERCLICK => {
+                    if con_app(|b| b.globo_de_actualizacion).unwrap_or(false) {
+                        abrir_ajustes_en(Some("acerca"));
+                    }
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -469,6 +530,10 @@ unsafe extern "system" fn procedimiento(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
         }
         WM_CLIP_LISTO => {
             con_app(|b| b.clip_listo());
+            LRESULT(0)
+        }
+        WM_ACTUALIZACION => {
+            con_app(|b| b.avisar_actualizacion());
             LRESULT(0)
         }
         WM_POWERBROADCAST => {
@@ -541,6 +606,7 @@ pub fn ejecutar(fondo: bool) {
             estado_escrito: None,
             error_avisado: None,
             en_bateria: en_bateria_ahora(),
+            globo_de_actualizacion: false,
         };
         APP.with(|x| *x.borrow_mut() = Some(bandeja));
         con_app(|b| {
@@ -550,6 +616,7 @@ pub fn ejecutar(fondo: bool) {
             b.actualizar_estado();
         });
         SetTimer(hwnd, TEMPORIZADOR, 1000, None);
+        vigilar_actualizaciones(hwnd);
         if !fondo {
             abrir_ajustes();
         }

@@ -480,6 +480,7 @@ impl App {
 
     pub(super) fn pagina_acerca(&mut self, ui: &mut Ui) {
         encabezado(ui, "Acerca de", "Qué versión de Kairo estás usando y qué cambió en cada una.");
+        self.tarjeta_actualizaciones(ui);
         let novedades = version::novedades();
         tarjeta(ui, "Esta versión", |ui| {
             fila_info(ui, "Versión", &format!("Kairo {} (vista previa)", version::VERSION));
@@ -537,6 +538,72 @@ impl App {
 
         tarjeta(ui, "Licencia", |ui| {
             fila_info(ui, "GPL-3.0", "Código abierto: puedes usarlo, estudiarlo, mejorarlo y compartirlo con su código.");
+        });
+    }
+
+    fn tarjeta_actualizaciones(&mut self, ui: &mut Ui) {
+        use super::actualizar::{hace, Paso};
+        let paso = self.actualizador.paso();
+        let disponible = self.actualizador.disponible();
+        let ocupado = self.actualizador.ocupado();
+        tarjeta(ui, "Actualizaciones", |ui| {
+            let (texto, color) = match &paso {
+                Paso::Nada => ("Todavía no se buscó.".to_string(), SECUNDARIO),
+                Paso::Buscando => ("Buscando…".to_string(), SECUNDARIO),
+                Paso::AlDia => {
+                    let cuando = crate::actualizacion::revisado().map(|r| format!(" (revisado {})", hace(r))).unwrap_or_default();
+                    (format!("Estás al día{cuando}."), VERDE)
+                }
+                Paso::Hay(d) => (format!("Kairo {} ya está disponible.", d.version), ACENTO_HOVER),
+                Paso::Bajando(d, f) => (format!("Bajando Kairo {}… {:.0} %", d.version, f * 100.0), SECUNDARIO),
+                Paso::Instalando => ("Instalando: Kairo se cierra y se vuelve a abrir solo.".to_string(), SECUNDARIO),
+                Paso::Error(e, _) => (e.clone(), ROJO),
+            };
+            fila_info_color(ui, "Estado", &texto, color);
+            if let Paso::Bajando(_, f) = paso {
+                ui.add(egui::ProgressBar::new(f).desired_height(5.0).fill(ACENTO));
+                ui.add_space(6.0);
+            }
+            if let Some(d) = disponible.as_ref().filter(|d| !d.notas.trim().is_empty()) {
+                separador(ui);
+                let mut notas: String = d.notas.trim().chars().take(700).collect();
+                if d.notas.trim().chars().count() > 700 {
+                    notas.push('…');
+                }
+                fila_info(ui, "Qué trae", &notas);
+            }
+            separador(ui);
+            fila(
+                ui,
+                "Buscar actualizaciones solas",
+                Some("Una consulta chica a GitHub por día. Si hay una versión nueva, te avisa junto al reloj."),
+                |ui| {
+                    interruptor(ui, &mut self.cfg.buscar_actualizaciones, true);
+                },
+            );
+            ui.add_space(8.0);
+            let (mut actualizar, mut buscar, mut pagina) = (false, false, false);
+            ui.horizontal(|ui| {
+                if let Some(d) = &disponible {
+                    actualizar = boton(ui, Some(icono::DESCARGAR), &format!("Actualizar a {}", d.version), Estilo::Primario, !ocupado).clicked();
+                }
+                buscar = boton(ui, Some(icono::RECARGAR), "Buscar ahora", Estilo::Secundario, !ocupado).clicked();
+                if disponible.is_some() {
+                    pagina = boton(ui, Some(icono::ENLACE), "Ver en GitHub", Estilo::Secundario, true).clicked();
+                }
+            });
+            ui.add_space(8.0);
+            if actualizar {
+                self.actualizador.actualizar(ui.ctx());
+            }
+            if buscar {
+                self.actualizador.buscar_ahora(ui.ctx());
+            }
+            if let (true, Some(d)) = (pagina, &disponible) {
+                if d.pagina.starts_with("https://github.com/") {
+                    let _ = std::process::Command::new("explorer").arg(&d.pagina).spawn();
+                }
+            }
         });
     }
 }

@@ -18,6 +18,8 @@ PCs de escritorio.
   escritorio. Para actualizar, abre el instalador de la versión nueva: tus ajustes y tus clips se conservan.
   Como el exe todavía no tiene firma digital, Windows puede avisar "Windows protegió su PC": *Más
   información → Ejecutar de todas formas*.
+- Cuando sale una versión nueva, Kairo te avisa junto al reloj y en su ventana: "Actualizar" la baja de
+  GitHub, comprueba que sea idéntica a la publicada (SHA-256) y la instala sola. Se puede apagar en Acerca de.
 - Para desinstalar: Configuración → Aplicaciones → Kairo. Pregunta si borrar también tus ajustes; los clips
   nunca se borran.
 - Abre Kairo: aparece el ícono de Kairo junto al reloj y se abre la ventana de Kairo en la Biblioteca.
@@ -83,7 +85,8 @@ el desinstalador.
 - [ ] **Fase 5: editor.** Reproductor dentro de Kairo, recorte y exportar sin recodificar, y quitar pistas
   (por ejemplo, Discord) usando los datos de cada clip.
 - [ ] **Fase 6: extras.** ~~Instalador~~ (listo: `KairoSetup.exe`, sin permisos de administrador, con
-  desinstalador en "Aplicaciones instaladas"), actualizaciones verificadas y firma digital.
+  desinstalador en "Aplicaciones instaladas"), ~~actualizaciones~~ (listo: aviso y actualización con
+  SHA-256) y firma digital.
 
 **Cómo medimos "no afecta los FPS":** mismo juego, misma escena, laptop conectada al cargador y 3 corridas por
 caso: sin grabar, con Medal, con Kairo y con la grabadora de NVIDIA o AMD. Se anotan FPS promedio, "1 % low" y
@@ -103,6 +106,14 @@ Para armar el instalador (compila y deja `dist\KairoSetup-<versión>.exe`):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\instalador.ps1
+```
+
+Para publicar una versión (los Kairo instalados la detectan solos): sube `version` en `Cargo.toml`, haz
+commit y corre el script. Necesita [GitHub CLI](https://cli.github.com) (`gh`). Sube la rama y crea el
+release `v<versión>` con el instalador y su `.sha256`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\publicar.ps1
 ```
 
 Para desarrollo hay una opción que guarda una imagen de una página de los ajustes (sirve para revisar la
@@ -141,6 +152,7 @@ cargo run --features dev -- --captura-instalador instalador.png
 - Estado de la grabadora: `%APPDATA%\Kairo\estado.json`
 - Registro (para entender fallas): `%APPDATA%\Kairo\kairo.log`
 - Miniaturas de la biblioteca: `%APPDATA%\Kairo\miniaturas`
+- Última búsqueda de actualizaciones: `%APPDATA%\Kairo\actualizacion.json`
 - Datos de cada clip (juego y pistas): `clip.mp4.kairo`, oculto al lado del video
 - Clips: `Videos\Kairo` (se puede cambiar en la página Clips)
 

@@ -299,6 +299,8 @@ pub struct Config {
     pub atajo_guardar: Option<Atajo>,
     pub atajo_pausa: Option<Atajo>,
     pub atajo_carpeta: Option<Atajo>,
+    /// Buscar versiones nuevas en GitHub (una consulta chica por día).
+    pub buscar_actualizaciones: bool,
 }
 
 impl Default for Config {
@@ -325,6 +327,7 @@ impl Default for Config {
             atajo_guardar: Some(Atajo::tecla_sola("F9")),
             atajo_pausa: None,
             atajo_carpeta: None,
+            buscar_actualizaciones: true,
         }
     }
 }

@@ -50,6 +50,9 @@ pub mod icono {
     pub const ENLACE: &str = "\u{E8A7}";
     /// Tacho de basura.
     pub const QUITAR: &str = "\u{E74D}";
+    pub const DESCARGAR: &str = "\u{E896}";
+    /// Flechas en círculo (buscar de nuevo).
+    pub const RECARGAR: &str = "\u{E72C}";
 }
 
 pub fn semibold() -> FontFamily {

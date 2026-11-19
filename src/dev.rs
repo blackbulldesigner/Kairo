@@ -52,7 +52,56 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     if pos("--prueba-desinstalar").is_some() {
         return Some(informar(prueba_desinstalar()));
     }
+    if let Some(k) = pos("--prueba-actualizacion") {
+        return Some(informar(prueba_actualizacion(args.get(k + 1).map(|s| s.as_str()))));
+    }
     None
+}
+
+/// Busca el último release de Kairo y, con `[api]` (la API de otro repositorio con releases), prueba bajar su
+/// archivo más chico con SHA-256: tiene que pasar con el SHA bueno y rechazarse con uno cambiado.
+fn prueba_actualizacion(api: Option<&str>) -> Result<()> {
+    use crate::actualizacion::{self, Archivo};
+    match actualizacion::buscar()? {
+        None => println!("Kairo: todavía no hay releases publicados"),
+        Some(d) => println!(
+            "Kairo: último release {} (¿más nuevo que este exe? {}) · instalador: {:?}",
+            d.version,
+            actualizacion::es_mas_nueva(&d.version),
+            d.instalador
+        ),
+    }
+    let Some(api) = api else { return Ok(()) };
+    let (codigo, cuerpo) = crate::red::texto(api, Some("application/vnd.github+json"))?;
+    if codigo != 200 {
+        return Err(anyhow!("{api} respondió {codigo}"));
+    }
+    let j: serde_json::Value = serde_json::from_str(&cuerpo)?;
+    let d = actualizacion::desde_json(&j);
+    println!("release de prueba: {:?}", d.as_ref().map(|d| (&d.version, &d.pagina)));
+    let asset = j["assets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|a| a["digest"].as_str().is_some_and(|d| d.starts_with("sha256:")))
+        .min_by_key(|a| a["size"].as_u64().unwrap_or(u64::MAX))
+        .ok_or_else(|| anyhow!("ese release no tiene archivos con SHA-256"))?;
+    let bueno = Archivo {
+        nombre: asset["name"].as_str().unwrap_or_default().to_string(),
+        url: asset["browser_download_url"].as_str().unwrap_or_default().to_string(),
+        tamano: asset["size"].as_u64().unwrap_or(0),
+        sha256: asset["digest"].as_str().and_then(|d| d.strip_prefix("sha256:")).map(|s| s.to_string()),
+    };
+    println!("bajando {} ({} bytes)…", bueno.nombre, bueno.tamano);
+    let ruta = actualizacion::descargar(&bueno, &|_| {})?;
+    println!("ok   bajado y verificado: {} ({} bytes)", ruta.display(), std::fs::metadata(&ruta)?.len());
+    let malo = Archivo { sha256: Some("0".repeat(64)), ..bueno };
+    match actualizacion::descargar(&malo, &|_| {}) {
+        Ok(_) => return Err(anyhow!("se aceptó un archivo con el SHA-256 cambiado")),
+        Err(e) => println!("ok   con el SHA-256 cambiado se rechaza: {e}"),
+    }
+    actualizacion::limpiar_descargas();
+    Ok(())
 }
 
 /// Las pruebas del instalador solo corren con `KAIRO_PRUEBA_INSTALACION` (todo queda en esa carpeta).

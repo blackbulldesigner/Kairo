@@ -93,6 +93,7 @@ pub struct App {
     pub(super) biblioteca: super::biblioteca::Biblioteca,
     /// Último clip que avisó la grabadora (si cambia, la biblioteca se vuelve a leer enseguida).
     ultimo_clip_visto: Option<String>,
+    pub(super) actualizador: super::actualizar::Actualizador,
 }
 
 impl App {
@@ -125,7 +126,11 @@ impl App {
                 cfg.programas_audio = vec![crate::config::ProgramaAudio { exe: p.exe, nombre: p.nombre, activa: true, volumen: 80 }];
             }
         }
-        let pagina = captura.as_ref().map(|c| c.pagina).unwrap_or(Pagina::Biblioteca);
+        // `--pagina acerca` (por ejemplo, desde el aviso de una versión nueva).
+        let pedida = std::env::args().skip_while(|a| a != "--pagina").nth(1).and_then(|p| Pagina::desde(&p));
+        let pagina = captura.as_ref().map(|c| c.pagina).or(pedida).unwrap_or(Pagina::Biblioteca);
+        // En las capturas de prueba no se va a internet.
+        let actualizador = super::actualizar::Actualizador::new(&cc.egui_ctx, cfg.buscar_actualizaciones && captura.is_none());
         Self {
             pagina,
             guardada: cfg.clone(),
@@ -144,6 +149,7 @@ impl App {
             programas_hasta: 0.0,
             biblioteca: super::biblioteca::Biblioteca::new(&cc.egui_ctx),
             ultimo_clip_visto: None,
+            actualizador,
         }
     }
 
@@ -195,7 +201,7 @@ impl App {
                 None => (TENUE, "Preparando…".into(), "Abriendo la captura.".into(), false),
             },
         };
-        let r = Frame::none().fill(FONDO).stroke(egui::Stroke::new(1.0_f32, BORDE)).rounding(8.0).inner_margin(Margin::same(11.0)).show(ui, |ui| {
+        Frame::none().fill(FONDO).stroke(egui::Stroke::new(1.0_f32, BORDE)).rounding(8.0).inner_margin(Margin::same(11.0)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 3.0;
             ui.horizontal(|ui| {
@@ -212,11 +218,44 @@ impl App {
                 }
             }
         });
-        let alto = r.response.rect.height();
-        if (alto - self.alto_estado).abs() > 0.5 {
-            self.alto_estado = alto;
-            ui.ctx().request_repaint();
-        }
+    }
+
+    /// Arriba del estado, si hay una versión nueva: aviso con el botón "Actualizar" y su progreso.
+    fn aviso_actualizacion(&mut self, ui: &mut egui::Ui) {
+        use super::actualizar::Paso;
+        let paso = self.actualizador.paso();
+        let (titulo, detalle, progreso, boton_texto) = match &paso {
+            Paso::Hay(d) => (format!("Kairo {} disponible", d.version), "Tus ajustes y tus clips no se tocan.".to_string(), None, Some("Actualizar")),
+            Paso::Bajando(d, f) => (format!("Bajando Kairo {}…", d.version), format!("{:.0} %", f * 100.0), Some(*f), None),
+            Paso::Instalando => ("Instalando…".to_string(), "Kairo se cierra y se vuelve a abrir.".to_string(), Some(1.0), None),
+            Paso::Error(_, Some(d)) => (format!("Kairo {} disponible", d.version), "No se pudo actualizar: mira Acerca de.".to_string(), None, Some("Reintentar")),
+            _ => return,
+        };
+        Frame::none().fill(SELECCION).stroke(egui::Stroke::new(1.0_f32, ACENTO_APAGADO)).rounding(8.0).inner_margin(Margin::same(11.0)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 3.0;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(icono::DESCARGAR).family(iconos()).size(13.0).color(TEXTO_SEL));
+                ui.label(RichText::new(titulo).family(semibold()).size(13.0).color(TEXTO_SEL));
+            });
+            ui.label(RichText::new(detalle).size(12.0).color(SECUNDARIO));
+            if let Some(f) = progreso {
+                ui.add_space(3.0);
+                ui.add(egui::ProgressBar::new(f).desired_height(5.0).fill(ACENTO));
+            }
+            if let Some(t) = boton_texto {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if boton(ui, None, t, Estilo::Primario, true).clicked() {
+                        self.actualizador.actualizar(ui.ctx());
+                    }
+                    if boton(ui, None, "Qué trae", Estilo::Texto, true).clicked() {
+                        self.pagina = Pagina::AcercaDe;
+                    }
+                });
+            }
+        });
+        ui.add_space(8.0);
     }
 
     pub(super) fn avisar(&mut self, texto: impl Into<String>, error: bool) {
@@ -293,9 +332,18 @@ impl App {
             }
             ui.add_space(2.0);
         }
-        // Estado de la grabadora, pegado abajo (su alto se mide en el cuadro anterior).
+        // El aviso de actualización y el estado de la grabadora, pegados abajo (su alto se mide en el cuadro
+        // anterior).
         ui.add_space((ui.available_height() - self.alto_estado).max(0.0));
-        self.tarjeta_estado(ui);
+        let r = ui.vertical(|ui| {
+            self.aviso_actualizacion(ui);
+            self.tarjeta_estado(ui);
+        });
+        let alto = r.response.rect.height();
+        if (alto - self.alto_estado).abs() > 0.5 {
+            self.alto_estado = alto;
+            ui.ctx().request_repaint();
+        }
     }
 
     fn pie(&mut self, ui: &mut egui::Ui) {
@@ -330,6 +378,7 @@ impl eframe::App for App {
         self.leer_tecla_de_atajo(ctx);
         self.sincronizar_atajos();
         self.leer_estado(ctx);
+        self.actualizador.revisar_cierre(ctx);
         let equipo = self.equipo.lock().ok().and_then(|e| e.clone());
         let nuevo_clip = self.estado.as_ref().and_then(|e| e.ultimo_clip.clone());
         if nuevo_clip.is_some() && nuevo_clip != self.ultimo_clip_visto {

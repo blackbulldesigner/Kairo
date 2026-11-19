@@ -10,6 +10,7 @@
 //! - `--instalar` o el exe llamado "KairoSetup…": el instalador (`--instalar --sin-ventana` actualiza el
 //!   Kairo instalado sin preguntar); `--desinstalar`: el desinstalador.
 
+mod actualizacion;
 mod autoinicio;
 mod bandeja;
 mod config;
@@ -21,6 +22,7 @@ mod estado;
 mod grabadora;
 mod icono;
 mod instalacion;
+mod red;
 mod registro;
 mod ui;
 mod version;
@@ -41,7 +43,8 @@ fn main() {
     }
     if instalacion::es_instalador(&args) {
         if args.iter().any(|a| a == "--sin-ventana") {
-            std::process::exit(if instalacion::actualizar_sin_ventana() { 0 } else { 1 });
+            let abrir = args.iter().any(|a| a == "--abrir");
+            std::process::exit(if instalacion::actualizar_sin_ventana(abrir) { 0 } else { 1 });
         }
         let _ = ui::instalador::abrir(None);
         return;
