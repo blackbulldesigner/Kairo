@@ -5,12 +5,29 @@ use eframe::egui::{self, Ui};
 use super::app::App;
 use super::tema::*;
 use super::widgets::*;
-use crate::config::{self, Calidad, CualAtajo, FuenteAudio, ModoCaptura, Resolucion, TarjetaGrabacion};
+use crate::config::{
+    self, Calidad, Codec, ControlBitrate, CualAtajo, FuenteAudio, ModoCaptura, OtrosSonidos, PerfilH264, Resolucion, TarjetaGrabacion, VelocidadEncoder,
+};
 use crate::equipo::Equipo;
+use crate::version;
 
 const RAM_SI_NO_SE_SABE: u64 = 8 * 1024 * 1024 * 1024;
 
+/// Lo que muestra la tarjeta de la limpieza (se recalcula cada 5 s o si cambian los límites).
+#[derive(Clone)]
+pub(super) struct ResumenLimpieza {
+    total: usize,
+    bytes: u64,
+    favoritos: usize,
+    borrar: usize,
+    borrar_bytes: u64,
+}
+
 impl App {
+    fn ahora_ui(&self, ui: &Ui) -> f64 {
+        ui.input(|i| i.time)
+    }
+
     pub(super) fn pagina_grabacion(&mut self, ui: &mut Ui, eq: Option<&Equipo>) {
         encabezado(ui, "Grabación", "Qué se graba, por cuánto tiempo y con qué calidad.");
 
@@ -31,17 +48,53 @@ impl App {
             ui.add_space(4.0);
             let desc = match self.cfg.modo {
                 ModoCaptura::Escritorio => "Graba la pantalla completa: el juego y todo lo que aparezca encima.",
-                ModoCaptura::Juego => "Graba solo la ventana del juego: si haces Alt+Tab, en el clip no aparece tu escritorio.",
+                ModoCaptura::Juego => {
+                    "Graba solo el juego: si haces Alt+Tab o lo minimizas, esa parte del clip queda en negro y tu \
+                     escritorio no aparece."
+                }
             };
             ui.label(egui::RichText::new(desc).size(12.5).color(SECUNDARIO));
             ui.add_space(6.0);
+
+            if self.cfg.modo == ModoCaptura::Juego {
+                // La lista de programas abiertos se relee cada 3 s mientras esta página está a la vista.
+                if self.ahora_ui(ui) >= self.programas_hasta {
+                    self.programas = crate::grabadora::juego::programas_abiertos();
+                    self.programas_hasta = self.ahora_ui(ui) + 3.0;
+                }
+                ui.add_space(4.0);
+                separador(ui);
+                let desc = match &self.cfg.juego_elegido {
+                    None => "Automático: el que esté adelante en pantalla completa.".to_string(),
+                    Some(j) if self.programas.iter().any(|p| p.exe == j.exe) => {
+                        "Elegido a mano: sirve también si juegas en ventana.".to_string()
+                    }
+                    Some(j) => format!("{} no está abierto: el clip queda en negro hasta que lo abras.", j.nombre),
+                };
+                fila(ui, "Juego", Some(&desc), |ui| {
+                    let actual = self.cfg.juego_elegido.as_ref().map(|j| j.nombre.clone()).unwrap_or_else(|| "Automático".into());
+                    egui::ComboBox::new("juego", "").selected_text(actual).width(260.0).height(360.0).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.cfg.juego_elegido, None, "Automático (pantalla completa)");
+                        if let Some(j) = self.cfg.juego_elegido.clone() {
+                            if !self.programas.iter().any(|p| p.exe == j.exe) {
+                                ui.selectable_value(&mut self.cfg.juego_elegido, Some(j.clone()), format!("{} (cerrado)", j.nombre));
+                            }
+                        }
+                        ui.separator();
+                        for p in &self.programas {
+                            let elegido = crate::config::JuegoElegido { exe: p.exe.clone(), nombre: p.nombre.clone() };
+                            ui.selectable_value(&mut self.cfg.juego_elegido, Some(elegido), &p.nombre).on_hover_text(&p.exe);
+                        }
+                    });
+                });
+            }
 
             let monitores = eq.map(|e| e.monitores.len()).unwrap_or(0);
             if self.cfg.modo == ModoCaptura::Escritorio && monitores >= 2 {
                 let e = eq.expect("hay monitores");
                 ui.add_space(4.0);
                 separador(ui);
-                fila(ui, "Monitor", Some("En automático se graba el monitor donde está el juego."), |ui| {
+                fila(ui, "Monitor", Some("En automático se graba el monitor donde está el juego (si no hay juego, el principal)."), |ui| {
                     let actual = match &self.cfg.monitor {
                         None => "Automático".to_string(),
                         Some(id) => e
@@ -60,6 +113,16 @@ impl App {
                     });
                 });
             }
+            ui.add_space(4.0);
+            separador(ui);
+            fila(
+                ui,
+                "Mostrar el mouse",
+                Some("El puntero aparece en tus clips. En los juegos casi nunca se ve: la mayoría dibuja el suyo."),
+                |ui| {
+                    interruptor(ui, &mut self.cfg.mostrar_mouse, true);
+                },
+            );
         });
 
         let nativa = eq.map(|e| e.resolucion_principal()).unwrap_or((1920, 1080));
@@ -69,13 +132,41 @@ impl App {
             let maximo = config::Config::segundos_maximos(ram, por_segundo);
             // Solo se muestra recortado: el ajuste cambia cuando lo tocas (abrir la ventana no deja cambios).
             let segundos = self.cfg.segundos.min(maximo);
-            let usa = config::texto_bytes(por_segundo * segundos as u64);
-            let desc = format!("Lo que se guarda al apretar el atajo. Usa unos {usa} de RAM.");
+            let largo = self.cfg.segundos_largo.min(maximo);
+            let atajo_largo = self.cfg.atajo(CualAtajo::GuardarLargo).map(|a| a.texto());
+            let largo_activo = self.cfg.clip_largo();
+            // La RAM la marca el más largo de los dos (si el clip largo está prendido).
+            let en_ram = if largo_activo { segundos.max(largo) } else { segundos };
+            let usa = config::texto_bytes(por_segundo * en_ram as u64);
+            let atajo = self.cfg.atajo(CualAtajo::Guardar).map(|a| a.texto()).unwrap_or_else(|| "el atajo".into());
+            let desc = format!("Lo que se guarda al apretar {atajo}. Kairo usa unos {usa} de RAM.");
             fila(ui, "Duración del clip", Some(&desc), |ui| {
                 valor(ui, &config::texto_duracion(segundos), 72.0, true);
                 let mut s = segundos as f32;
                 if deslizador(ui, &mut s, config::SEGUNDOS_MIN as f32..=maximo as f32, 5.0, 190.0, true) {
                     self.cfg.segundos = s as u32;
+                }
+            });
+            separador(ui);
+            let desc = match (largo_activo, &atajo_largo) {
+                (false, _) => "Apagado no usa nada: ni RAM de más ni su atajo. Prendido, guarda un clip más largo con su propio atajo, \
+                               por si la jugada empezó antes."
+                    .to_string(),
+                (true, Some(a)) => format!("Con {a} guardas un clip más largo. Usa más RAM mientras está prendido."),
+                (true, None) => "Ponle un atajo en Atajos → «Guardar clip largo» para usarlo.".to_string(),
+            };
+            fila(ui, "Clip largo", Some(&desc), |ui| {
+                let mut activo = largo_activo;
+                if interruptor(ui, &mut activo, true) {
+                    self.cfg.clip_largo_activo = Some(activo);
+                }
+                if largo_activo {
+                    ui.add_space(14.0);
+                    valor(ui, &config::texto_duracion(largo), 60.0, true);
+                    let mut s = largo as f32;
+                    if deslizador(ui, &mut s, config::SEGUNDOS_MIN as f32..=maximo as f32, 5.0, 160.0, true) {
+                        self.cfg.segundos_largo = s as u32;
+                    }
                 }
             });
             separador(ui);
@@ -103,12 +194,21 @@ impl App {
             });
             separador(ui);
 
-            let desc = format!("Unos {} Mbps. «Ligera» es ideal para laptops.", self.cfg.mbps(nativa).to_string().replace('.', ","));
+            let avanzado = self.cfg.avanzado.activo;
+            let desc = if avanzado {
+                format!("Personalizada en Opciones avanzadas: {} Mbps.", texto_mbps(self.cfg.mbps(nativa)))
+            } else {
+                format!("Unos {} Mbps. «Ligera» es ideal para laptops.", texto_mbps(self.cfg.mbps(nativa)))
+            };
             fila(ui, "Calidad", Some(&desc), |ui| {
                 let opciones: Vec<(Calidad, Option<&str>, &str)> = Calidad::TODAS.iter().map(|c| (*c, None, c.nombre())).collect();
-                segmentos(ui, "calidad", &mut self.cfg.calidad, &opciones, None, 32.0);
+                ui.add_enabled_ui(!avanzado, |ui| {
+                    segmentos(ui, "calidad", &mut self.cfg.calidad, &opciones, None, 32.0);
+                });
             });
         });
+
+        self.tarjeta_avanzado(ui, nativa, eq);
 
         tarjeta(ui, "Rendimiento", |ui| {
             match eq {
@@ -116,7 +216,10 @@ impl App {
                 Some(e) if e.tiene_dos_tarjetas() => fila(
                     ui,
                     "Tarjeta de video para grabar",
-                    Some("En automático se usa la que maneja tu monitor. En laptops, la integrada suele quitarle menos FPS al juego."),
+                    Some(
+                        "En automático se usa la que maneja tu monitor. En laptops, la integrada suele quitarle menos FPS \
+                         al juego. Si Windows no deja capturar desde la elegida, Kairo usa la captura de respaldo.",
+                    ),
                     |ui| {
                         segmentos(
                             ui,
@@ -137,6 +240,15 @@ impl App {
                     fila(ui, "Tarjeta de video para grabar", Some(&nombre), |_| {});
                 }
             }
+            if eq.is_some_and(|e| e.encoders.is_empty()) {
+                separador(ui);
+                fila(
+                    ui,
+                    "Sin encoder por hardware",
+                    Some("Tu tarjeta no comprime video: Kairo graba con el procesador, a 1080p y 30 fps como máximo, para no quitarle al juego."),
+                    |_| {},
+                );
+            }
             if eq.is_some_and(|e| e.es_laptop()) {
                 separador(ui);
                 fila(ui, "Ahorro con batería", Some("Desenchufada, la laptop graba a 720p y en calidad Ligera."), |ui| {
@@ -146,32 +258,269 @@ impl App {
         });
     }
 
+    /// Grabación → Opciones avanzadas: bitrate, control, cuadros clave, perfil, velocidad del encoder y audio.
+    fn tarjeta_avanzado(&mut self, ui: &mut Ui, nativa: (u32, u32), eq: Option<&Equipo>) {
+        let de_la_calidad = self.cfg.mbps_de_la_calidad(nativa);
+        tarjeta(ui, "Opciones avanzadas", |ui| {
+            let mut activo = self.cfg.avanzado.activo;
+            fila(
+                ui,
+                "Personalizar el video",
+                Some("Elige tú el bitrate, los cuadros clave y cómo trabaja el encoder. Apagado, Kairo usa lo que dice «Calidad»."),
+                |ui| {
+                    if interruptor(ui, &mut activo, true) {
+                        self.cfg.avanzado.activo = activo;
+                        // Arranca desde lo que daba la calidad elegida.
+                        if activo {
+                            self.cfg.avanzado.mbps = (de_la_calidad * 2.0).round().clamp(config::MBPS_MIN * 2.0, config::MBPS_MAX * 2.0) / 2.0;
+                        }
+                    }
+                },
+            );
+            if !self.cfg.avanzado.activo {
+                return;
+            }
+            let a = &mut self.cfg.avanzado;
+            separador(ui);
+            // Formato: H.264 siempre; HEVC si la tarjeta lo comprime (y Windows lo guarda en MP4).
+            let hevc = eq.is_some_and(|e| e.hevc);
+            let hevc_se_ve = eq.is_some_and(|e| e.hevc_se_ve);
+            let desc = match a.codec {
+                _ if !hevc => "H.264: se ve en todos lados. Tu tarjeta no comprime HEVC.".to_string(),
+                Codec::Hevc if !hevc_se_ve => "HEVC: con la misma calidad pesa cerca de un 40 % menos, pero en esta PC falta «Extensiones de \
+                                               video HEVC» (Microsoft Store): sin eso, Kairo y las apps de Windows no los muestran. VLC sí."
+                    .to_string(),
+                Codec::Hevc => "HEVC: con la misma calidad pesa cerca de un 40 % menos (y usa menos RAM). Algunos celulares y \
+                                 apps no lo reproducen."
+                    .to_string(),
+                _ => "H.264: se ve en todos lados (celulares, Discord, WhatsApp). HEVC pesa menos, pero no todos lo reproducen.".to_string(),
+            };
+            fila(ui, "Formato del video", Some(&desc), |ui| {
+                let antes = a.codec;
+                ui.add_enabled_ui(hevc || a.codec != Codec::H264, |ui| {
+                    segmentos(ui, "codec", &mut a.codec, &[(Codec::H264, None, "H.264"), (Codec::Hevc, None, "HEVC")], None, 32.0);
+                });
+                // Con HEVC alcanza con menos bitrate para la misma calidad (y al revés).
+                if a.codec != antes {
+                    let factor = if a.codec == Codec::Hevc { 0.65 } else { 1.0 / 0.65 };
+                    a.mbps = ((a.mbps * factor * 2.0).round() / 2.0).clamp(config::MBPS_MIN, config::MBPS_MAX);
+                }
+            });
+            separador(ui);
+            let por_minuto = config::texto_bytes((a.mbps as f64 * 125_000.0 * 60.0) as u64);
+            let desc = format!("Más alto = mejor imagen y clips más pesados. Un minuto de video ocupa unos {por_minuto}.");
+            fila(ui, "Bitrate del video", Some(&desc), |ui| {
+                valor(ui, &format!("{} Mbps", texto_mbps(a.mbps)), 76.0, true);
+                deslizador(ui, &mut a.mbps, config::MBPS_MIN..=config::MBPS_MAX, 0.5, 190.0, true);
+            });
+            separador(ui);
+            let desc = match a.control {
+                ControlBitrate::Variable => "Variable: más bits en las escenas con movimiento, sin pasarse del pico. Recomendado.",
+                ControlBitrate::Constante => "Constante: el mismo tamaño cada segundo. Más predecible, a veces con menos detalle.",
+            };
+            fila(ui, "Control del bitrate", Some(desc), |ui| {
+                segmentos(
+                    ui,
+                    "control",
+                    &mut a.control,
+                    &[(ControlBitrate::Variable, None, "Variable"), (ControlBitrate::Constante, None, "Constante")],
+                    None,
+                    32.0,
+                );
+            });
+            if a.control == ControlBitrate::Variable {
+                separador(ui);
+                fila(ui, "Pico máximo", Some("Cuánto puede subir en las escenas con mucho movimiento (×1,5 = hasta 50 % más)."), |ui| {
+                    valor(ui, &format!("×{}", texto_mbps(a.pico)), 52.0, true);
+                    deslizador(ui, &mut a.pico, 1.1..=3.0, 0.1, 160.0, true);
+                });
+            }
+            separador(ui);
+            fila(
+                ui,
+                "Cuadro clave cada",
+                Some("Los clips y los recortes del editor empiezan en un cuadro clave: más seguido = más precisos, un poco más pesados."),
+                |ui| {
+                    segmentos(ui, "clave", &mut a.clave_cada, &[(0.5, None, "0,5 s"), (1.0, None, "1 s"), (2.0, None, "2 s")], None, 32.0);
+                },
+            );
+            if a.codec == Codec::H264 {
+                separador(ui);
+                fila(ui, "Perfil H.264", Some("«Alto» comprime mejor. «Básico» solo si un celular o un reproductor viejo no abre tus clips."), |ui| {
+                    segmentos(
+                        ui,
+                        "perfil",
+                        &mut a.perfil,
+                        &[(PerfilH264::Alto, None, "Alto"), (PerfilH264::Principal, None, "Principal"), (PerfilH264::Basico, None, "Básico")],
+                        None,
+                        32.0,
+                    );
+                });
+            }
+            separador(ui);
+            fila(
+                ui,
+                "Velocidad del encoder",
+                Some("«Rápida» le pide menos a la tarjeta (ideal en laptops); «Calidad» da mejor imagen con el mismo bitrate."),
+                |ui| {
+                    segmentos(
+                        ui,
+                        "velocidad",
+                        &mut a.velocidad,
+                        &[
+                            (VelocidadEncoder::Automatica, None, "Auto"),
+                            (VelocidadEncoder::Rapida, None, "Rápida"),
+                            (VelocidadEncoder::Equilibrada, None, "Media"),
+                            (VelocidadEncoder::Calidad, None, "Calidad"),
+                        ],
+                        None,
+                        32.0,
+                    );
+                },
+            );
+            separador(ui);
+            fila(ui, "Audio", Some("Calidad del audio de los clips (AAC), en kbps."), |ui| {
+                segmentos(ui, "audio_kbps", &mut a.audio_kbps, &[(96, None, "96"), (128, None, "128"), (160, None, "160"), (192, None, "192")], None, 32.0);
+            });
+            ui.add_space(8.0);
+            if boton(ui, Some(icono::RECARGAR), "Volver a lo recomendado", Estilo::Secundario, true).clicked() {
+                *a = config::VideoAvanzado { activo: true, mbps: (de_la_calidad * 2.0).round() / 2.0, ..Default::default() };
+            }
+            ui.add_space(8.0);
+        });
+    }
+
     pub(super) fn pagina_audio(&mut self, ui: &mut Ui, eq: Option<&Equipo>) {
-        encabezado(ui, "Audio", "Qué se escucha en tus clips.");
+        encabezado(ui, "Audio", "Qué se escucha en tus clips, cada fuente con su volumen.");
         let por_juego = eq.map_or(true, |e| e.audio_por_juego());
         tarjeta(ui, "Fuentes", |ui| {
             let desc_juego = if por_juego {
-                "Solo el juego que estás jugando."
+                "Solo el juego detectado (o el que elegiste en Grabación)."
             } else {
                 "Necesita Windows 10 versión 2004 o más nuevo."
             };
             fuente(ui, "Sonido del juego", desc_juego, &mut self.cfg.audio_juego, por_juego);
             separador(ui);
-            fuente(
-                ui,
-                "Resto del sistema",
-                "Discord, música, navegador… Apágalo para que no salga en tus clips.",
-                &mut self.cfg.audio_sistema,
-                true,
-            );
-            separador(ui);
             fuente(ui, "Micrófono", "El micrófono predeterminado de Windows.", &mut self.cfg.audio_mic, true);
         });
-        nota(ui, "Por ahora las fuentes se mezclan en una sola pista. Las pistas separadas llegan más adelante.");
+
+        // La lista de programas abiertos se relee cada 3 s mientras la página está a la vista.
+        let ahora = self.ahora_ui(ui);
+        if self.cfg.otros_sonidos == OtrosSonidos::Elegidos && ahora >= self.programas_hasta {
+            self.programas = crate::grabadora::juego::programas_abiertos();
+            self.programas_hasta = ahora + 3.0;
+        }
+        tarjeta(ui, "Otros sonidos", |ui| {
+            if !por_juego {
+                fuente(ui, "Resto del sistema", "Todo lo que suena en la PC, el juego incluido.", &mut self.cfg.audio_sistema, true);
+                return;
+            }
+            ui.add_space(6.0);
+            let ancho = ui.available_width();
+            segmentos(
+                ui,
+                "otros",
+                &mut self.cfg.otros_sonidos,
+                &[(OtrosSonidos::Todo, None, "Todo lo demás"), (OtrosSonidos::Elegidos, None, "Solo los programas que elijas")],
+                Some(ancho),
+                36.0,
+            );
+            ui.add_space(4.0);
+            let desc = match self.cfg.otros_sonidos {
+                OtrosSonidos::Todo => "Todo lo que suena en la PC menos el juego, en una sola pista.",
+                OtrosSonidos::Elegidos => {
+                    "Solo los programas de la lista, cada uno con su volumen y su pista. Si uno no está abierto, se suma \
+                     solo cuando lo abras."
+                }
+            };
+            ui.label(egui::RichText::new(desc).size(12.5).color(SECUNDARIO));
+            ui.add_space(6.0);
+            match self.cfg.otros_sonidos {
+                OtrosSonidos::Todo => {
+                    separador(ui);
+                    fuente(ui, "Resto del sistema", "Discord, música, navegador… Apágalo para que no salga en tus clips.", &mut self.cfg.audio_sistema, true);
+                }
+                OtrosSonidos::Elegidos => {
+                    let mut quitar = None;
+                    for (i, p) in self.cfg.programas_audio.iter_mut().enumerate() {
+                        separador(ui);
+                        let abierto = self.programas.iter().any(|x| x.exe == p.exe);
+                        let desc = if abierto { p.exe.clone() } else { format!("{} · no está abierto", p.exe) };
+                        fila(ui, &p.nombre, Some(&desc), |ui| {
+                            if boton_icono(ui, icono::QUITAR, "Quitar de la lista").clicked() {
+                                quitar = Some(i);
+                            }
+                            ui.add_space(8.0);
+                            interruptor(ui, &mut p.activa, true);
+                            ui.add_space(12.0);
+                            valor(ui, &format!("{} %", p.volumen), 46.0, p.activa);
+                            let mut v = p.volumen as f32;
+                            if deslizador(ui, &mut v, 0.0..=100.0, 5.0, 150.0, p.activa) {
+                                p.volumen = v as u8;
+                            }
+                        });
+                    }
+                    if let Some(i) = quitar {
+                        self.cfg.programas_audio.remove(i);
+                    }
+                    separador(ui);
+                    let juego = self.cfg.juego_elegido.as_ref().map(|j| j.exe.clone());
+                    let disponibles: Vec<_> = self
+                        .programas
+                        .iter()
+                        .filter(|x| !self.cfg.programas_audio.iter().any(|p| p.exe == x.exe) && Some(&x.exe) != juego.as_ref())
+                        .cloned()
+                        .collect();
+                    let lleno = self.cfg.programas_audio.len() >= crate::config::PROGRAMAS_MAX;
+                    let desc = if lleno {
+                        "Ya hay 8 programas: quita uno para sumar otro."
+                    } else if disponibles.is_empty() {
+                        "No hay otros programas abiertos con ventana."
+                    } else {
+                        "Elige entre los programas abiertos (por ejemplo, Discord o tu música)."
+                    };
+                    let mut agregar = None;
+                    fila(ui, "Agregar programa", Some(desc), |ui| {
+                        ui.add_enabled_ui(!lleno && !disponibles.is_empty(), |ui| {
+                            egui::ComboBox::new("agregar_programa", "").selected_text("+ Agregar programa").width(240.0).height(320.0).show_ui(
+                                ui,
+                                |ui| {
+                                    for x in &disponibles {
+                                        if ui.selectable_label(false, &x.nombre).on_hover_text(&x.exe).clicked() {
+                                            agregar = Some(x.clone());
+                                        }
+                                    }
+                                },
+                            );
+                        });
+                    });
+                    if let Some(x) = agregar {
+                        self.cfg.programas_audio.push(crate::config::ProgramaAudio { exe: x.exe, nombre: x.nombre, activa: true, volumen: 100 });
+                    }
+                }
+            }
+        });
+
+        tarjeta(ui, "Pistas", |ui| {
+            fila(
+                ui,
+                "Pistas separadas",
+                Some(
+                    "Además de la mezcla, cada fuente (y cada programa) va en su propia pista del MP4: sirve para editar, por \
+                     ejemplo para quitar Discord y dejar solo el juego.",
+                ),
+                |ui| {
+                    interruptor(ui, &mut self.cfg.pistas_separadas, true);
+                },
+            );
+        });
+        if !por_juego {
+            nota(ui, "En esta versión de Windows no se puede separar el sonido del juego ni de cada programa: va todo junto.");
+        }
     }
 
     pub(super) fn pagina_clips(&mut self, ui: &mut Ui) {
-        encabezado(ui, "Clips", "Dónde se guardan tus clips.");
+        encabezado(ui, "Guardado", "Dónde y cómo se guardan tus clips.");
         tarjeta(ui, "Carpeta", |ui| {
             let ruta = self.cfg.carpeta.display().to_string();
             let libre = config::espacio_libre(&self.cfg.carpeta)
@@ -185,8 +534,7 @@ impl App {
                 cambiar = boton(ui, Some(icono::EDITAR), "Cambiar…", Estilo::Secundario, true).clicked();
             });
             if abrir {
-                let _ = std::fs::create_dir_all(&self.cfg.carpeta);
-                let _ = std::process::Command::new("explorer").arg(&self.cfg.carpeta).spawn();
+                crate::abrir::carpeta(&self.cfg.carpeta);
             }
             if cambiar {
                 let inicio = if self.cfg.carpeta.exists() { self.cfg.carpeta.clone() } else { config::carpeta_videos() };
@@ -195,10 +543,120 @@ impl App {
                 }
             }
             separador(ui);
+            fila(
+                ui,
+                "Una carpeta por juego",
+                Some(
+                    "Los clips de cada juego van en su carpeta y llevan su nombre (por ejemplo, Kairo\\Fortnite); los que \
+                     no son de un juego, en Kairo\\Escritorio.",
+                ),
+                |ui| {
+                    interruptor(ui, &mut self.cfg.carpeta_por_juego, true);
+                },
+            );
+            separador(ui);
             fila(ui, "Sonido al guardar", Some("Un aviso corto para saber que el clip se guardó."), |ui| {
                 interruptor(ui, &mut self.cfg.sonido_al_guardar, true);
             });
         });
+        self.tarjeta_limpieza(ui);
+    }
+
+    /// Guardado → Limpieza automática: los límites, cuánto ocupan los clips y qué se borraría ahora.
+    fn tarjeta_limpieza(&mut self, ui: &mut Ui) {
+        // Lo que hay en la carpeta y lo que se borraría, recalculado si cambian los límites o cada 5 s.
+        let ahora = self.ahora_ui(ui);
+        let clave = (self.cfg.carpeta.clone(), self.cfg.limpieza.clone());
+        let vencido = self.limpieza_resumen.as_ref().map_or(true, |(k, hasta, _)| *k != clave || ahora >= *hasta);
+        if vencido {
+            let clips = crate::limpieza::clips_de_kairo(&self.cfg.carpeta);
+            let plan = crate::limpieza::plan(&self.cfg.carpeta, &self.cfg.limpieza);
+            let r = ResumenLimpieza {
+                total: clips.len(),
+                bytes: clips.iter().map(|c| c.tamano).sum(),
+                favoritos: clips.iter().filter(|c| c.favorito).count(),
+                borrar: plan.len(),
+                borrar_bytes: plan.iter().map(|c| c.tamano).sum(),
+            };
+            self.limpieza_resumen = Some((clave, ahora + 5.0, r));
+        }
+        let Some((_, _, r)) = self.limpieza_resumen.clone() else { return };
+        let mut limpiar = false;
+        tarjeta(ui, "Limpieza automática", |ui| {
+            let l = &mut self.cfg.limpieza;
+            fila(
+                ui,
+                "Borrar clips viejos solos",
+                Some("Después de guardar cada clip, Kairo borra los que pasen de los límites. Nunca borra tus favoritos (la estrella en la Biblioteca) ni videos que no hizo Kairo."),
+                |ui| {
+                    interruptor(ui, &mut l.activa, true);
+                },
+            );
+            if l.activa {
+                separador(ui);
+                fila(ui, "Más viejos que", None, |ui| {
+                    segmentos(
+                        ui,
+                        "dias",
+                        &mut l.dias,
+                        &[(0, None, "Sin límite"), (7, None, "7 días"), (14, None, "14"), (30, None, "30"), (60, None, "60"), (90, None, "90")],
+                        None,
+                        32.0,
+                    );
+                });
+                separador(ui);
+                fila(ui, "Si todos juntos ocupan más de", Some("Se borran los más viejos hasta bajar del límite."), |ui| {
+                    segmentos(
+                        ui,
+                        "gb",
+                        &mut l.gb,
+                        &[(0, None, "Sin límite"), (10, None, "10 GB"), (25, None, "25"), (50, None, "50"), (100, None, "100"), (200, None, "200")],
+                        None,
+                        32.0,
+                    );
+                });
+                separador(ui);
+                fila(
+                    ui,
+                    "Borrar sin pasar por la Papelera",
+                    Some("Libera el espacio al instante, pero no se pueden recuperar. Apagado, van a la Papelera de reciclaje."),
+                    |ui| {
+                        interruptor(ui, &mut l.sin_papelera, true);
+                    },
+                );
+            }
+            separador(ui);
+            let texto = format!(
+                "{} clip{} · {}{}",
+                r.total,
+                if r.total == 1 { "" } else { "s" },
+                config::texto_bytes(r.bytes),
+                if r.favoritos > 0 { format!(" · {} favorito{}", r.favoritos, if r.favoritos == 1 { "" } else { "s" }) } else { String::new() }
+            );
+            let desc = if !l.activa {
+                "Los que hizo Kairo en tu carpeta de clips.".to_string()
+            } else if r.borrar == 0 {
+                "Con estos límites, ahora no se borraría ninguno.".to_string()
+            } else {
+                format!("Con estos límites, ahora se borrarían {} ({}).", r.borrar, config::texto_bytes(r.borrar_bytes))
+            };
+            fila(ui, &texto, Some(&desc), |ui| {
+                if l.activa {
+                    limpiar = boton(ui, Some(icono::QUITAR), "Limpiar ahora", Estilo::Secundario, r.borrar > 0).clicked();
+                }
+            });
+        });
+        if limpiar {
+            match crate::limpieza::limpiar(&self.cfg.carpeta, &self.cfg.limpieza) {
+                Ok((n, b)) => {
+                    let donde = if self.cfg.limpieza.sin_papelera { "borrados" } else { "en la Papelera" };
+                    self.avisar(format!("{n} clips {donde} ({}).", config::texto_bytes(b)), false);
+                }
+                Err(e) => self.avisar(e, true),
+            }
+            self.limpieza_resumen = None;
+            self.biblioteca.escanear_ya();
+        }
     }
 
     pub(super) fn pagina_atajos(&mut self, ui: &mut Ui) {
@@ -209,20 +667,61 @@ impl App {
                     separador(ui);
                 }
                 let capturando = self.capturando == Some(cual);
-                let mut clic = false;
+                let (mut clic, mut quitar) = (false, false);
                 fila(ui, cual.titulo(), cual.descripcion(), |ui| {
+                    // La X quita el atajo (queda sin asignar). Se dibuja primero porque la fila va de derecha a izquierda.
+                    if self.cfg.atajo(cual).is_some() && !capturando {
+                        quitar = boton_icono(ui, icono::CERRAR, "Quitar este atajo").clicked();
+                        ui.add_space(4.0);
+                    }
                     clic = atajo(ui, self.cfg.atajo(cual), capturando).clicked();
                 });
-                if clic {
+                if quitar {
+                    *self.cfg.atajo_mut(cual) = None;
+                } else if clic {
                     self.capturando = if capturando { None } else { Some(cual) };
                 }
             }
         });
-        nota(ui, "Haz clic en un atajo y aprieta la tecla nueva. Esc cancela; Retroceso lo deja sin asignar.");
+        nota(ui, "Haz clic en un atajo y aprieta la tecla nueva (Esc cancela). La X lo quita.");
     }
 
     pub(super) fn pagina_sistema(&mut self, ui: &mut Ui, eq: Option<&Equipo>) {
         encabezado(ui, "Sistema", "Lo que Kairo detectó de tu equipo. Si algo falla, copia el diagnóstico y compártelo.");
+        let estado = self.estado.clone();
+        tarjeta(ui, "Grabadora", |ui| match &estado {
+            None => fila_info(ui, "Estado", "Cerrada"),
+            Some(e) => {
+                let texto = if e.pausado {
+                    "En pausa"
+                } else if e.grabando {
+                    "Grabando"
+                } else if e.error.is_some() {
+                    "No puede grabar"
+                } else {
+                    "Preparando"
+                };
+                fila_info(ui, "Estado", texto);
+                separador(ui);
+                fila_info(ui, "Juego", e.juego.as_deref().unwrap_or("Ninguno detectado"));
+                if let Some(err) = &e.error {
+                    separador(ui);
+                    fila_info_color(ui, "Problema", err, ROJO);
+                }
+                if !e.detalle.is_empty() && e.grabando {
+                    separador(ui);
+                    fila_info(ui, "Grabando con", &e.detalle.replace(" · ", "\n"));
+                }
+                if e.ahorro {
+                    separador(ui);
+                    fila_info(ui, "Ahorro con batería", "Activo: 720p y calidad Ligera mientras esté desenchufada.");
+                }
+                if let Some(c) = &e.ultimo_clip {
+                    separador(ui);
+                    fila_info(ui, "Último clip", c);
+                }
+            }
+        });
         tarjeta(ui, "Tu equipo", |ui| {
             let Some(e) = eq else {
                 fila_info(ui, "Detectando…", "");
@@ -260,26 +759,167 @@ impl App {
                 self.avisar("Diagnóstico copiado: pégalo donde quieras compartirlo.", false);
             }
             if abrir {
-                let dir = config::datos_dir();
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                crate::abrir::carpeta(&config::datos_dir());
             }
         });
 
-        tarjeta(ui, "Acerca de", |ui| {
-            fila_info(ui, "Versión", &format!("Kairo {} (vista previa)", env!("CARGO_PKG_VERSION")));
-            separador(ui);
-            fila_info(ui, "Licencia", "GPL-3.0: código abierto. Puedes usarlo, estudiarlo y mejorarlo.");
-            separador(ui);
-            fila_info(ui, "Estado", "Los ajustes y el diagnóstico ya funcionan. La grabadora llega en la fase 1.");
+        tarjeta(ui, "Inicio", |ui| {
+            // Se aplica al momento (no espera a «Guardar cambios»): es un ajuste de Windows, no de config.json.
+            fila(ui, "Iniciar con Windows", Some("Kairo arranca en la bandeja, sin abrir ventanas."), |ui| {
+                if interruptor(ui, &mut self.autoinicio, true) {
+                    crate::autoinicio::poner(self.autoinicio);
+                    self.autoinicio = crate::autoinicio::activo();
+                }
+            });
         });
+    }
+
+    pub(super) fn pagina_acerca(&mut self, ui: &mut Ui) {
+        encabezado(ui, "Acerca de", "Qué versión de Kairo estás usando y qué cambió en cada una.");
+        self.tarjeta_actualizaciones(ui);
+        let novedades = version::novedades();
+        tarjeta(ui, "Esta versión", |ui| {
+            fila_info(ui, "Versión", &format!("Kairo {} (vista previa)", version::VERSION));
+            separador(ui);
+            let compilacion = if version::COMMIT.is_empty() {
+                "Sin datos de git".to_string()
+            } else {
+                format!("Commit {} · rama {}", version::COMMIT, version::RAMA)
+            };
+            fila_info(ui, "Compilación", &compilacion);
+            if let Some(n) = novedades.first() {
+                separador(ui);
+                fila_info(ui, "Último cambio", &format!("{} ({})", n.texto, version::FECHA_COMMIT));
+            }
+            separador(ui);
+            fila_info(ui, "Compilado el", &version::compilado());
+            if version::con_cambios_sin_commit() {
+                separador(ui);
+                fila_info_color(
+                    ui,
+                    "Atención",
+                    "Este exe se compiló con cambios que todavía no tienen commit: puede traer más de lo que dice la lista.",
+                    AMARILLO,
+                );
+            }
+            ui.add_space(8.0);
+            let mut copiar = false;
+            let mut github = false;
+            ui.horizontal(|ui| {
+                copiar = boton(ui, Some(icono::COPIAR), "Copiar versión", Estilo::Secundario, true).clicked();
+                github = boton(ui, Some(icono::ENLACE), "Ver en GitHub", Estilo::Secundario, true).clicked();
+            });
+            ui.add_space(8.0);
+            if copiar {
+                let texto = format!("Kairo {} ({}, compilado el {})", version::corta(), version::FECHA_COMMIT, version::compilado());
+                ui.output_mut(|o| o.copied_text = texto);
+                self.avisar("Versión copiada.", false);
+            }
+            if github {
+                crate::abrir::pagina("https://github.com/blackbulldesigner/Kairo");
+            }
+        });
+
+        tarjeta(ui, "Novedades", |ui| {
+            if novedades.is_empty() {
+                fila_info(ui, "Sin datos", "Este exe se compiló sin git: no trae la lista de cambios.");
+            }
+            for (i, n) in novedades.iter().enumerate() {
+                if i > 0 {
+                    separador(ui);
+                }
+                fila_novedad(ui, n.fecha, n.texto, n.commit, i == 0);
+            }
+        });
+
+        tarjeta(ui, "Licencia", |ui| {
+            fila_info(ui, "GPL-3.0", "Código abierto: puedes usarlo, estudiarlo, mejorarlo y compartirlo con su código.");
+        });
+    }
+
+    fn tarjeta_actualizaciones(&mut self, ui: &mut Ui) {
+        use super::actualizar::{hace, Paso};
+        let paso = self.actualizador.paso();
+        let disponible = self.actualizador.disponible();
+        let ocupado = self.actualizador.ocupado();
+        tarjeta(ui, "Actualizaciones", |ui| {
+            let (texto, color) = match &paso {
+                Paso::Nada => ("Todavía no se buscó.".to_string(), SECUNDARIO),
+                Paso::Buscando => ("Buscando…".to_string(), SECUNDARIO),
+                Paso::AlDia => {
+                    let cuando = crate::actualizacion::revisado().map(|r| format!(" (revisado {})", hace(r))).unwrap_or_default();
+                    (format!("Estás al día{cuando}."), VERDE)
+                }
+                Paso::Hay(d) => (format!("Kairo {} ya está disponible.", d.version), ACENTO_HOVER),
+                Paso::Bajando(d, f) => (format!("Bajando Kairo {}… {:.0} %", d.version, f * 100.0), SECUNDARIO),
+                Paso::Instalando => ("Instalando: Kairo se cierra y se vuelve a abrir solo.".to_string(), SECUNDARIO),
+                Paso::Error(e, _) => (e.clone(), ROJO),
+            };
+            fila_info_color(ui, "Estado", &texto, color);
+            if let Paso::Bajando(_, f) = paso {
+                ui.add(egui::ProgressBar::new(f).desired_height(5.0).fill(ACENTO));
+                ui.add_space(6.0);
+            }
+            if let Some(d) = disponible.as_ref().filter(|d| !d.notas.trim().is_empty()) {
+                separador(ui);
+                let mut notas: String = d.notas.trim().chars().take(700).collect();
+                if d.notas.trim().chars().count() > 700 {
+                    notas.push('…');
+                }
+                fila_info(ui, "Qué trae", &notas);
+            }
+            separador(ui);
+            fila(
+                ui,
+                "Buscar actualizaciones solas",
+                Some("Una consulta chica a GitHub por día. Si hay una versión nueva, te avisa junto al reloj."),
+                |ui| {
+                    interruptor(ui, &mut self.cfg.buscar_actualizaciones, true);
+                },
+            );
+            ui.add_space(8.0);
+            let (mut actualizar, mut buscar, mut pagina) = (false, false, false);
+            ui.horizontal(|ui| {
+                if let Some(d) = &disponible {
+                    actualizar = boton(ui, Some(icono::DESCARGAR), &format!("Actualizar a {}", d.version), Estilo::Primario, !ocupado).clicked();
+                }
+                buscar = boton(ui, Some(icono::RECARGAR), "Buscar ahora", Estilo::Secundario, !ocupado).clicked();
+                if disponible.is_some() {
+                    pagina = boton(ui, Some(icono::ENLACE), "Ver en GitHub", Estilo::Secundario, true).clicked();
+                }
+            });
+            ui.add_space(8.0);
+            if actualizar {
+                self.actualizador.actualizar(ui.ctx());
+            }
+            if buscar {
+                self.actualizador.buscar_ahora(ui.ctx());
+            }
+            if let (true, Some(d)) = (pagina, &disponible) {
+                if d.pagina.starts_with("https://github.com/") {
+                    crate::abrir::pagina(&d.pagina);
+                }
+            }
+        });
+    }
+}
+
+/// "16", "16,5" (con coma decimal).
+fn texto_mbps(v: f32) -> String {
+    let r = (v * 10.0).round() / 10.0;
+    if r.fract() == 0.0 {
+        format!("{}", r as i64)
+    } else {
+        format!("{r:.1}").replace('.', ",")
     }
 }
 
 /// Fila de una fuente de audio: interruptor y volumen.
 fn fuente(ui: &mut Ui, titulo: &str, desc: &str, f: &mut FuenteAudio, disponible: bool) {
     fila(ui, titulo, Some(desc), |ui| {
-        interruptor(ui, &mut f.activa, disponible);
+        // Si la fuente no está disponible se muestra apagada, aunque el ajuste guardado diga otra cosa.
+        let mut apagada = false;
+        interruptor(ui, if disponible { &mut f.activa } else { &mut apagada }, disponible);
         ui.add_space(12.0);
         let activo = disponible && f.activa;
         valor(ui, &format!("{} %", f.volumen), 46.0, activo);

@@ -29,21 +29,42 @@ pub const ACENTO_APAGADO: Color32 = Color32::from_rgb(0x25, 0x45, 0x75);
 pub const TEXTO_ACENTO_APAGADO: Color32 = Color32::from_rgb(0x7D, 0x93, 0xB8);
 pub const VERDE: Color32 = Color32::from_rgb(0x35, 0xC6, 0x83);
 pub const ROJO: Color32 = Color32::from_rgb(0xE8, 0x5D, 0x5D);
+pub const AMARILLO: Color32 = Color32::from_rgb(0xE8, 0xB0, 0x4B);
 
 /// Íconos de Segoe MDL2 Assets (viene con Windows 10 y 11).
 pub mod icono {
-    pub const VIDEO: &str = "\u{E714}";
     pub const MONITOR: &str = "\u{E7F4}";
     pub const JUEGO: &str = "\u{E7FC}";
-    pub const MICROFONO: &str = "\u{E720}";
     /// Pila de fotogramas.
     pub const CLIPS: &str = "\u{E8B9}";
     /// Carpeta horizontal (la E8B7 de MDL2 sale vertical y parece una tablet).
     pub const CARPETA_ABIERTA: &str = "\u{ED25}";
-    pub const TECLADO: &str = "\u{E765}";
-    pub const AJUSTES: &str = "\u{E713}";
     pub const COPIAR: &str = "\u{E8C8}";
     pub const EDITAR: &str = "\u{E70F}";
+    pub const INFO: &str = "\u{E946}";
+    /// Abrir en otra ventana (para enlaces).
+    pub const ENLACE: &str = "\u{E8A7}";
+    /// Tacho de basura.
+    pub const QUITAR: &str = "\u{E74D}";
+    pub const DESCARGAR: &str = "\u{E896}";
+    pub const BUSCAR: &str = "\u{E721}";
+    pub const VOLUMEN: &str = "\u{E767}";
+    pub const CHECK: &str = "\u{E73E}";
+    /// Cruz (quitar, cerrar).
+    pub const CERRAR: &str = "\u{E711}";
+    pub const SILENCIO: &str = "\u{E74F}";
+    pub const AGRANDAR: &str = "\u{E740}";
+    pub const ACHICAR: &str = "\u{E73F}";
+    pub const REPRODUCIR: &str = "\u{E768}";
+    pub const PAUSA: &str = "\u{E769}";
+    pub const ATRAS: &str = "\u{E72B}";
+    /// Tijera (recortar / editar).
+    pub const TIJERA: &str = "\u{E8C6}";
+    pub const GUARDAR: &str = "\u{E74E}";
+    pub const ESTRELLA: &str = "\u{E734}";
+    pub const ESTRELLA_LLENA: &str = "\u{E735}";
+    /// Flechas en círculo (buscar de nuevo).
+    pub const RECARGAR: &str = "\u{E72C}";
 }
 
 pub fn semibold() -> FontFamily {

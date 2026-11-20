@@ -8,6 +8,7 @@ use eframe::egui::{
     Stroke, TextFormat, Ui, UiBuilder,
 };
 
+use super::animar;
 use super::tema::*;
 use crate::config::Atajo;
 
@@ -85,6 +86,10 @@ pub fn fila(ui: &mut Ui, titulo: &str, desc: Option<&str>, control: impl FnOnce(
 
 /// Fila de solo lectura: etiqueta a la izquierda (ancho fijo) y el valor a la derecha.
 pub fn fila_info(ui: &mut Ui, etiqueta: &str, valor: &str) {
+    fila_info_color(ui, etiqueta, valor, TEXTO);
+}
+
+pub fn fila_info_color(ui: &mut Ui, etiqueta: &str, valor: &str, color: Color32) {
     const ANCHO_ETIQUETA: f32 = 170.0;
     let ancho = ui.available_width();
     let g_et = medir_ajustado(ui, etiqueta, FontId::proportional(13.0), ANCHO_ETIQUETA - 12.0);
@@ -92,7 +97,32 @@ pub fn fila_info(ui: &mut Ui, etiqueta: &str, valor: &str) {
     let alto = g_et.size().y.max(g_val.size().y) + 18.0;
     let (rect, _) = ui.allocate_exact_size(vec2(ancho, alto), Sense::hover());
     ui.painter().galley(pos2(rect.left(), rect.top() + 9.0), g_et, SECUNDARIO);
-    ui.painter().galley(pos2(rect.left() + ANCHO_ETIQUETA, rect.top() + 9.0), g_val, TEXTO);
+    ui.painter().galley(pos2(rect.left() + ANCHO_ETIQUETA, rect.top() + 9.0), g_val, color);
+}
+
+/// Un cambio de la lista de novedades: fecha, título y commit. `actual` marca el de este exe.
+pub fn fila_novedad(ui: &mut Ui, fecha: &str, texto: &str, commit: &str, actual: bool) {
+    const ANCHO_FECHA: f32 = 96.0;
+    let ancho = ui.available_width();
+    let g_commit = medir(ui, commit, FontId::monospace(11.5));
+    let g_chip = actual.then(|| medir(ui, "este exe", FontId::proportional(11.5)));
+    let derecha = g_commit.size().x + g_chip.as_ref().map_or(0.0, |g| g.size().x + 22.0);
+    let ancho_texto = (ancho - ANCHO_FECHA - derecha - 16.0).max(120.0);
+    let g_fecha = medir(ui, fecha, FontId::proportional(12.5));
+    let g_texto = medir_ajustado(ui, texto, FontId::proportional(13.0), ancho_texto);
+    let alto = g_texto.size().y.max(g_fecha.size().y) + 16.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(ancho, alto), Sense::hover());
+    let p = ui.painter();
+    let y = rect.top() + 8.0;
+    p.galley(pos2(rect.left(), y + 1.0), g_fecha, TENUE);
+    p.galley(pos2(rect.left() + ANCHO_FECHA, y), g_texto, if actual { TEXTO } else { SECUNDARIO });
+    let x_commit = rect.right() - g_commit.size().x;
+    p.galley(pos2(x_commit, y + 1.0), g_commit, TENUE);
+    if let Some(g) = g_chip {
+        let r = Rect::from_min_size(pos2(x_commit - 10.0 - g.size().x - 12.0, y - 1.0), vec2(g.size().x + 12.0, g.size().y + 4.0));
+        p.rect_filled(r, 5.0, SELECCION);
+        p.galley(pos2(r.left() + 6.0, r.top() + 2.0), g, TEXTO_SEL);
+    }
 }
 
 /// Texto chico y tenue, para notas debajo de una tarjeta.
@@ -183,28 +213,40 @@ pub fn segmentos<T: PartialEq + Copy>(
     let interior = rect.shrink(3.0);
     let base = ui.id().with(id);
     let mut cambiado = false;
+    // Dónde va cada opción.
+    let mut rects = Vec::with_capacity(opciones.len());
     let mut x = interior.left();
-    let p = ui.painter().clone();
-    p.rect(rect, 8.0, FONDO, Stroke::new(1.0_f32, BORDE));
-    for (i, ((v, _, _), (gt, gi))) in opciones.iter().zip(medidas).enumerate() {
+    for i in 0..opciones.len() {
         let w = match ancho {
             Some(_) => interior.width() / opciones.len() as f32,
             None => naturales[i],
         };
-        let r = Rect::from_min_size(pos2(x, interior.top()), vec2(w, interior.height()));
+        rects.push(Rect::from_min_size(pos2(x, interior.top()), vec2(w, interior.height())));
         x += w;
+    }
+    let p = ui.painter().clone();
+    p.rect(rect, 8.0, FONDO, Stroke::new(1.0_f32, BORDE));
+    // El fondo de la opción elegida se desliza hasta la nueva.
+    if let Some(sel) = opciones.iter().position(|(v, _, _)| *v == *valor) {
+        let x = animar::suave(ui.ctx(), base.with("x"), rects[sel].left(), 0.22);
+        let w = animar::suave(ui.ctx(), base.with("w"), rects[sel].width(), 0.22);
+        let r = Rect::from_min_size(pos2(x, interior.top()), vec2(w, interior.height()));
+        p.rect(r, 6.0, SEGMENTO, Stroke::new(1.0_f32, SEGMENTO_BORDE));
+    }
+    for (i, ((v, _, _), (gt, gi))) in opciones.iter().zip(medidas).enumerate() {
+        let r = rects[i];
         let resp = ui.interact(r, base.with(i), Sense::click()).on_hover_cursor(CursorIcon::PointingHand);
         if resp.clicked() && *valor != *v {
             *valor = *v;
             cambiado = true;
         }
         let sel = *valor == *v;
-        if sel {
-            p.rect(r, 6.0, SEGMENTO, Stroke::new(1.0_f32, SEGMENTO_BORDE));
-        } else if resp.hovered() {
-            p.rect_filled(r, 6.0, HOVER);
+        let h = animar::hacia(ui.ctx(), base.with(("h", i)), resp.hovered() && !sel);
+        if h > 0.0 {
+            p.rect_filled(r, 6.0, HOVER.gamma_multiply(h));
         }
-        let color = if sel { TEXTO } else { SECUNDARIO };
+        let s = animar::hacia(ui.ctx(), base.with(("s", i)), sel);
+        let color = mezclar(SECUNDARIO, TEXTO, s.max(h * 0.6));
         let ancho_contenido = gt.size().x + gi.as_ref().map_or(0.0, |g| g.size().x + 8.0);
         let mut cx = r.center().x - ancho_contenido / 2.0;
         if let Some(g) = gi {
@@ -262,15 +304,18 @@ pub fn boton(ui: &mut Ui, icono: Option<&str>, texto: &str, estilo: Estilo, acti
     let gi = icono.map(|i| medir(ui, i, FontId::new(13.0, iconos())));
     let contenido = gt.size().x + gi.as_ref().map_or(0.0, |g| g.size().x + 8.0);
     let (rect, resp) = ui.allocate_exact_size(vec2(contenido + 28.0, 32.0), if activo { Sense::click() } else { Sense::hover() });
-    let hover = activo && resp.hovered();
+    // El color cambia de a poco al pasar el mouse, y al apretarlo se achica un poquito.
+    let h = animar::hacia(ui.ctx(), resp.id.with("h"), activo && resp.hovered());
+    let apretado = animar::hacia(ui.ctx(), resp.id.with("a"), activo && resp.is_pointer_button_down_on());
+    let rect = rect.shrink(apretado * 1.5);
     let (fondo, borde, color) = match (estilo, activo) {
-        (Estilo::Primario, true) => (if hover { ACENTO_HOVER } else { ACENTO }, Color32::TRANSPARENT, Color32::WHITE),
+        (Estilo::Primario, true) => (mezclar(ACENTO, ACENTO_HOVER, h), Color32::TRANSPARENT, Color32::WHITE),
         (Estilo::Primario, false) => (ACENTO_APAGADO, Color32::TRANSPARENT, TEXTO_ACENTO_APAGADO),
-        (Estilo::Secundario, _) => (if hover { BOTON_HOVER } else { BOTON }, BOTON_BORDE, if activo { TEXTO } else { TENUE }),
-        (Estilo::Texto, _) => (if hover { BOTON } else { Color32::TRANSPARENT }, Color32::TRANSPARENT, if activo { NAV } else { APAGADO }),
+        (Estilo::Secundario, _) => (mezclar(BOTON, BOTON_HOVER, h), mezclar(BOTON_BORDE, SEGMENTO_BORDE, h), if activo { TEXTO } else { TENUE }),
+        (Estilo::Texto, _) => (BOTON.gamma_multiply(h), Color32::TRANSPARENT, if activo { mezclar(NAV, TEXTO, h) } else { APAGADO }),
     };
     let p = ui.painter();
-    p.rect(rect, 7.0, fondo, Stroke::new(1.0_f32, borde));
+    p.rect(rect, 8.0, fondo, Stroke::new(1.0_f32, borde));
     let mut x = rect.center().x - contenido / 2.0;
     if let Some(g) = gi {
         let w = g.size().x;
@@ -285,25 +330,61 @@ pub fn boton(ui: &mut Ui, icono: Option<&str>, texto: &str, estilo: Estilo, acti
     }
 }
 
-/// Opción del menú de la izquierda.
-pub fn item_menu(ui: &mut Ui, icono: &str, texto: &str, seleccionado: bool) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
-    let p = ui.painter();
-    if seleccionado {
-        p.rect_filled(rect, 7.0, SELECCION);
-    } else if resp.hovered() {
-        p.rect_filled(rect, 7.0, HOVER);
-    }
-    let color = if seleccionado {
-        TEXTO_SEL
-    } else if resp.hovered() {
-        TEXTO
-    } else {
-        NAV
-    };
-    p.text(pos2(rect.left() + 14.0, rect.center().y), Align2::LEFT_CENTER, icono, FontId::new(15.0, iconos()), color);
-    p.text(pos2(rect.left() + 40.0, rect.center().y), Align2::LEFT_CENTER, texto, FontId::proportional(13.5), color);
+/// Píldora seleccionable (filtros).
+pub fn chip(ui: &mut Ui, texto: &str, seleccionado: bool) -> Response {
+    let g = medir(ui, texto, FontId::proportional(12.5));
+    let (rect, resp) = ui.allocate_exact_size(vec2(g.size().x + 26.0, 30.0), Sense::click());
+    let h = animar::hacia(ui.ctx(), resp.id.with("h"), resp.hovered());
+    let s = animar::hacia(ui.ctx(), resp.id.with("s"), seleccionado);
+    let fondo = mezclar(mezclar(BOTON, BOTON_HOVER, h), SELECCION, s);
+    let borde = mezclar(mezclar(BORDE, BOTON_BORDE, h), ACENTO, s);
+    let color = mezclar(mezclar(NAV, TEXTO, h), TEXTO_SEL, s);
+    ui.painter().rect(rect, 15.0, fondo, Stroke::new(1.0_f32, borde));
+    ui.painter().galley(pos2(rect.left() + 13.0, rect.center().y - g.size().y / 2.0), g, color);
     resp.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+/// Botón chico con solo un ícono (y un texto al pasar el mouse).
+pub fn boton_icono(ui: &mut Ui, icono: &str, ayuda: &str) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
+    let h = animar::hacia(ui.ctx(), resp.id.with("h"), resp.hovered());
+    if h > 0.0 {
+        ui.painter().rect_filled(rect, 8.0, BOTON_HOVER.gamma_multiply(h));
+    }
+    let color = mezclar(SECUNDARIO, TEXTO, h);
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, icono, FontId::new(14.0, iconos()), color);
+    resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(ayuda)
+}
+
+/// Pestañas de texto en fila, con una raya debajo de la elegida que se desliza al cambiar. Devuelve la
+/// pestaña en la que se hizo clic.
+pub fn pestanas(ui: &mut Ui, id: &str, actual: usize, nombres: &[&str], alto: f32) -> Option<usize> {
+    let base = ui.id().with(id);
+    let fuente = FontId::proportional(13.5);
+    let mut clic = None;
+    let mut rects = Vec::with_capacity(nombres.len());
+    for (i, n) in nombres.iter().enumerate() {
+        let g = medir(ui, n, fuente.clone());
+        let (r, resp) = ui.allocate_exact_size(vec2(g.size().x + 24.0, alto), Sense::click());
+        let h = animar::hacia(ui.ctx(), base.with(("h", i)), resp.hovered());
+        let s = animar::hacia(ui.ctx(), base.with(("s", i)), i == actual);
+        let color = mezclar(mezclar(NAV, TEXTO, h), TEXTO, s);
+        if h > 0.0 && i != actual {
+            ui.painter().rect_filled(r.shrink2(vec2(2.0, alto * 0.2)), 7.0, HOVER.gamma_multiply(h));
+        }
+        ui.painter().galley(pos2(r.center().x - g.size().x / 2.0, r.center().y - g.size().y / 2.0), g, color);
+        if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+            clic = Some(i);
+        }
+        rects.push(r);
+    }
+    if let Some(r) = rects.get(actual) {
+        let x = animar::suave(ui.ctx(), base.with("x"), r.left() + 10.0, 0.25);
+        let w = animar::suave(ui.ctx(), base.with("w"), r.width() - 20.0, 0.25);
+        let y = r.bottom() - 2.0;
+        ui.painter().rect_filled(Rect::from_min_size(pos2(x, y - 1.0), vec2(w, 2.5)), 1.5, ACENTO);
+    }
+    clic
 }
 
 /// Logo chico (el mismo dibujo que el ícono de la ventana).

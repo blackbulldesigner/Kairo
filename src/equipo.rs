@@ -13,7 +13,7 @@ use windows::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
 /// Desde esta compilación (Windows 10 2004) se puede capturar el audio de un solo proceso.
-const COMPILACION_AUDIO_POR_PROCESO: u32 = 19041;
+pub const COMPILACION_AUDIO_POR_PROCESO: u32 = 19041;
 const NT: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
 const CPU: &str = r"HARDWARE\DESCRIPTION\System\CentralProcessor\0";
 
@@ -62,6 +62,10 @@ pub struct Equipo {
     pub monitores: Vec<Monitor>,
     /// Encoders H.264 por hardware que ofrece Windows (Media Foundation).
     pub encoders: Vec<String>,
+    /// Hay encoder HEVC por hardware (y Windows lo guarda en MP4): se puede elegir en Opciones avanzadas.
+    pub hevc: bool,
+    /// Windows puede reproducir HEVC ("Extensiones de video HEVC"): sin esto, Kairo no muestra esos clips.
+    pub hevc_se_ve: bool,
 }
 
 impl Equipo {
@@ -80,6 +84,8 @@ impl Equipo {
             gpus,
             monitores,
             encoders: encoders_hardware(),
+            hevc: hay_mft(MFT_CATEGORY_VIDEO_ENCODER, false, MFVideoFormat_HEVC, true) && crate::grabadora::mp4::acepta(crate::config::Codec::Hevc),
+            hevc_se_ve: hay_mft(MFT_CATEGORY_VIDEO_DECODER, true, MFVideoFormat_HEVC, false),
         }
     }
 
@@ -168,7 +174,7 @@ impl Equipo {
 
     /// Resumen para copiar y compartir.
     pub fn como_texto(&self) -> String {
-        let mut s = format!("Kairo {} · diagnóstico\n", env!("CARGO_PKG_VERSION"));
+        let mut s = format!("Kairo {} · diagnóstico\n", crate::version::corta());
         s += &format!("Equipo: {}\n", self.texto_energia());
         s += &format!("Windows: {}\n", self.windows);
         s += &format!("Procesador: {}\n", self.procesador);
@@ -188,6 +194,11 @@ impl Equipo {
 fn texto_utf16(buf: &[u16]) -> String {
     let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     String::from_utf16_lossy(&buf[..n]).trim().to_string()
+}
+
+/// Número de compilación de Windows (19045 = Windows 10 22H2, 22000 o más = Windows 11).
+pub fn compilacion_windows() -> u32 {
+    reg_texto(NT, "CurrentBuildNumber").and_then(|s| s.parse().ok()).unwrap_or(0)
 }
 
 fn reg_texto(clave: &str, valor: &str) -> Option<String> {
@@ -322,6 +333,26 @@ fn tarjetas_y_monitores() -> (Vec<Gpu>, Vec<Monitor>) {
     // El principal primero: es el que la gente llama "monitor 1".
     monitores.sort_by_key(|m| !m.principal);
     (gpus, monitores)
+}
+
+/// ¿Hay un MFT de esta categoría para este formato (de entrada o de salida)? `hardware`: solo por hardware.
+pub fn hay_mft(categoria: windows::core::GUID, de_entrada: bool, sub: windows::core::GUID, hardware: bool) -> bool {
+    unsafe {
+        let _ = MFStartup(MF_VERSION, MFSTARTUP_LITE);
+        let tipo = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: sub };
+        let (entrada, salida) = if de_entrada { (Some(&tipo as *const _), None) } else { (None, Some(&tipo as *const _)) };
+        let flags = if hardware { MFT_ENUM_FLAG_HARDWARE.0 } else { MFT_ENUM_FLAG_ALL.0 } | MFT_ENUM_FLAG_SORTANDFILTER.0;
+        let mut lista: *mut Option<IMFActivate> = std::ptr::null_mut();
+        let mut cantidad = 0u32;
+        let hay = MFTEnumEx(categoria, MFT_ENUM_FLAG(flags), entrada, salida, &mut lista, &mut cantidad).is_ok() && cantidad > 0;
+        if !lista.is_null() {
+            for a in std::slice::from_raw_parts_mut(lista, cantidad as usize) {
+                drop(a.take());
+            }
+            CoTaskMemFree(Some(lista as *const _));
+        }
+        hay
+    }
 }
 
 /// Nombres de los encoders H.264 por hardware (NVIDIA, AMD, Intel Quick Sync…).
