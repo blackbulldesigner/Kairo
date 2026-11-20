@@ -115,7 +115,9 @@ try {
     }
 
     # El resultado también en un archivo, para compartirlo.
-    $md = @('| ' + ($filas[0].PSObject.Properties.Name -join ' | ') + ' |', '|' + ('---|' * $filas[0].PSObject.Properties.Name.Count))
+    # (Entre paréntesis: en PowerShell la coma va antes que el +.)
+    $columnas = @($filas[0].PSObject.Properties.Name)
+    $md = @(('| ' + ($columnas -join ' | ') + ' |'), ('|' + ('---|' * $columnas.Count)))
     foreach ($f in $filas) { $md += '| ' + ($f.PSObject.Properties.Value -join ' | ') + ' |' }
     $archivo = Join-Path $dir 'resultado.md'
     [IO.File]::WriteAllLines($archivo, $md, (New-Object Text.UTF8Encoding $false))
