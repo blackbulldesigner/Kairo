@@ -96,6 +96,15 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     if let Some(k) = pos("--prueba-medios") {
         return Some(informar(prueba_medios(args.get(k + 1)?)));
     }
+    if let Some(k) = pos("--exportar-icono") {
+        return Some(informar(exportar_icono(args.get(k + 1)?, args.get(k + 2)?.parse().ok()?)));
+    }
+    if let Some(k) = pos("--exportar-aviso") {
+        return Some(informar(exportar_aviso(&args[k + 1..])));
+    }
+    if let Some(k) = pos("--exportar-cuadro") {
+        return Some(informar(exportar_cuadro(args.get(k + 1)?, args.get(k + 2)?.parse().ok()?, args.get(k + 3)?)));
+    }
     if let Some(k) = pos("--prueba-fps") {
         return Some(informar(prueba_fps(&args[k + 1..])));
     }
@@ -846,4 +855,77 @@ fn grabar_fondo(segundos: u64) -> Result<()> {
     g.detener();
     println!("grabando: {} · {}", info.grabando, info.detalle);
     Ok(())
+}
+
+/// Guarda un PNG (RGBA u RGB, de arriba hacia abajo).
+fn guardar_png_dev(ruta: &str, ancho: u32, alto: u32, color: png::ColorType, datos: &[u8]) -> Result<()> {
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(ruta)?), ancho, alto);
+    enc.set_color(color);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header()?.write_image_data(datos)?;
+    Ok(())
+}
+
+/// El logo de Kairo (el mismo dibujo que el ícono) en PNG de `n`×`n`, para los diseños.
+fn exportar_icono(ruta: &str, n: usize) -> Result<()> {
+    let c = crate::ui::tema::ACENTO;
+    guardar_png_dev(ruta, n as u32, n as u32, png::ColorType::Rgba, &crate::icono::rgba(n, [c.r(), c.g(), c.b()]))
+}
+
+/// Un aviso de los que salen al guardar, en PNG: `<png> <escala> clip|foto|error <título> <detalle>`.
+fn exportar_aviso(a: &[String]) -> Result<()> {
+    use crate::aviso::{Dibujo, Tipo};
+    let uso = || anyhow!("uso: --exportar-aviso <png> <escala> clip|foto|error <título> <detalle>");
+    let ruta = a.first().ok_or_else(uso)?;
+    let escala: f32 = a.get(1).and_then(|s| s.parse().ok()).ok_or_else(uso)?;
+    let tipo = match a.get(2).map(|s| s.as_str()) {
+        Some("foto") => Tipo::Foto,
+        Some("error") => Tipo::Error,
+        _ => Tipo::Clip,
+    };
+    let d = unsafe { Dibujo::nuevo(tipo, a.get(3).ok_or_else(uso)?, a.get(4).ok_or_else(uso)?, escala)? };
+    let rgb: Vec<u8> = d.pixeles().chunks_exact(4).flat_map(|p| [p[2], p[1], p[0]]).collect();
+    guardar_png_dev(ruta, d.ancho as u32, d.alto as u32, png::ColorType::Rgb, &rgb)
+}
+
+/// Un cuadro del clip (en el segundo pedido, a su tamaño) en PNG, para los diseños.
+fn exportar_cuadro(mp4: &str, segundo: f64, ruta: &str) -> Result<()> {
+    iniciar_mf()?;
+    unsafe {
+        let l = crate::medios::lector(Path::new(mp4), true)?;
+        let (video, _) = crate::medios::flujos(&l);
+        let video = video.ok_or_else(|| anyhow!("el clip no tiene video"))?;
+        let _ = l.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0 as u32, false);
+        l.SetStreamSelection(video, true)?;
+        let t = MFCreateMediaType()?;
+        t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+        t.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
+        l.SetCurrentMediaType(video, None, &t)?;
+        let tam = l.GetCurrentMediaType(video)?.GetUINT64(&MF_MT_FRAME_SIZE)?;
+        let (w, h) = ((tam >> 32) as usize, (tam & 0xFFFF_FFFF) as usize);
+        let objetivo = (segundo * 1e7) as i64;
+        crate::medios::ir_a(&l, objetivo)?;
+        for _ in 0..600 {
+            let (mut flags, mut ts, mut muestra) = (0u32, 0i64, None);
+            l.ReadSample(video, 0, None, Some(&mut flags), Some(&mut ts), Some(&mut muestra))?;
+            if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
+                break;
+            }
+            let Some(m) = muestra else { continue };
+            if ts < objetivo - 200_000 {
+                continue;
+            }
+            let b = m.ConvertToContiguousBuffer()?;
+            let mut p = std::ptr::null_mut();
+            let mut largo = 0u32;
+            b.Lock(&mut p, None, Some(&mut largo))?;
+            let bgra = std::slice::from_raw_parts(p, (largo as usize).min(w * h * 4));
+            let rgb: Vec<u8> = bgra.chunks_exact(4).flat_map(|q| [q[2], q[1], q[0]]).collect();
+            let _ = b.Unlock();
+            guardar_png_dev(ruta, w as u32, h as u32, png::ColorType::Rgb, &rgb)?;
+            println!("cuadro de {w}×{h} en {:.2} s", ts as f64 / 1e7);
+            return Ok(());
+        }
+        Err(anyhow!("no se encontró ese cuadro"))
+    }
 }
