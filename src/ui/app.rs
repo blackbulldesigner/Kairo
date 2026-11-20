@@ -129,6 +129,12 @@ impl App {
         if captura.as_ref().is_some_and(|c| c.limpieza) {
             cfg.limpieza.activa = true;
         }
+        // Para las capturas (por ejemplo, los diseños): `KAIRO_CAPTURA_ATAJO=F9` muestra ese atajo de guardar (no se guarda).
+        if captura.is_some() {
+            if let Ok(tecla) = std::env::var("KAIRO_CAPTURA_ATAJO") {
+                cfg.atajo_guardar = Some(crate::config::Atajo::tecla_sola(&tecla));
+            }
+        }
         if captura.as_ref().is_some_and(|c| c.programas) {
             cfg.otros_sonidos = crate::config::OtrosSonidos::Elegidos;
             if let Some(p) = crate::grabadora::juego::programas_abiertos().into_iter().next() {
