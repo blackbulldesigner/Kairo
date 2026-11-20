@@ -25,11 +25,11 @@ PCs de escritorio.
 - Abre Kairo: aparece el ícono de Kairo junto al reloj y se abre la ventana de Kairo en la Biblioteca.
 - En la Biblioteca, un clic abre el clip en el reproductor de Kairo (Espacio pausa, ← → saltan 5 s). En
   **Editar** lo recortas y cambias el volumen de cada pista (por ejemplo, sin Discord) y en **Comprimir** lo
-  achicas para compartir (también "Para Discord": menos de 10 MB). Siempre se guarda como clip nuevo.
-- **A Discord:** arrastra la tarjeta del clip al chat (o a una carpeta), o clic derecho → **Copiar para Discord**
-  y pégalo con Ctrl+V. Si pesa más de 10 MB, Kairo primero achica una copia (sin tocar el clip) y la deja copiada.
-- **Varios a la vez:** Ctrl+clic o el círculo de cada tarjeta los selecciona; la barra de arriba los manda juntos
-  a la Papelera.
+  achicas para compartir (también "Para Discord": menos de 20 MB). Siempre se guarda como clip nuevo.
+- **A Discord:** clic derecho en el clip → **Copiar para Discord** y pégalo en el chat con Ctrl+V. Si pesa más de
+  20 MB (lo que deja subir Discord sin Nitro), Kairo primero achica una copia (sin tocar el clip) y la deja copiada.
+- **Varios a la vez:** arrastra con el mouse para dibujar un recuadro, como en el escritorio (con Ctrl se suma a lo
+  que ya elegiste), o usa Ctrl+clic o el círculo de cada tarjeta. La barra de arriba los manda juntos a la Papelera.
 - **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto.
 - Con un segundo atajo ("Guardar clip largo", en Atajos) guardas un clip más largo (por ejemplo, 2 min) por si la
   jugada empezó antes. La RAM la marca el más largo de los dos; con el interruptor **Clip largo** apagado no usa
@@ -102,7 +102,7 @@ el desinstalador.
   mientras juegas.
 - [x] **Fase 5: editor.** Reproductor dentro de Kairo (con WASAPI y el volumen de cada pista en vivo), recorte
   sin recodificar el video (desde el cuadro clave anterior), volumen o silencio por pista usando los datos de
-  cada clip, y compresor (1080p, 720p o menos de 10 MB) con el encoder de la tarjeta y prioridad baja.
+  cada clip, y compresor (1080p, 720p o menos de 20 MB) con el encoder de la tarjeta y prioridad baja.
 - [ ] **Fase 6: extras.** ~~Instalador~~ (listo: `KairoSetup.exe`, sin permisos de administrador, con
   desinstalador en "Aplicaciones instaladas"), ~~actualizaciones~~ (listo: aviso y actualización con
   SHA-256) y firma digital.

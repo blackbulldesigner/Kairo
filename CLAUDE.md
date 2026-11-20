@@ -68,11 +68,11 @@ Ver `README.md` para el plan por fases.
 - `src/medios/` (solo la ventana, nunca la grabadora): `reproductor.rs` (hilo de video que achica a 1280×720 y
   hilo de audio con WASAPI que mezcla las pistas con su volumen y lleva el reloj), `exportar.rs` (recorte sin
   recodificar el video, audio rearmado por pista) y `comprimir.rs` (recodificar con el sink writer). La interfaz
-  es `src/ui/visor.rs` (Ver, Editar, Comprimir), dentro de la Biblioteca. `discord.rs`: la copia de menos de 10 MB
+  es `src/ui/visor.rs` (Ver, Editar, Comprimir), dentro de la Biblioteca. `discord.rs`: la copia de menos de 20 MB
   (en `%TEMP%\Kairo Discord`, con el mismo nombre; se borra al día siguiente).
-- `src/compartir.rs` (solo la ventana): arrastrar un archivo afuera (`SHDoDragDrop` con el paquete del Explorador;
-  arranca con un mensaje a una ventanita propia apenas termina el cuadro de egui, nunca adentro) y copiarlo al
-  portapapeles (CF_HDROP).
+- `src/compartir.rs` (solo la ventana): copiar archivos al portapapeles (CF_HDROP), como "Copiar" en el Explorador.
+  (Arrastrar clips afuera de la ventana se probó y se sacó: la persona prefiere clic derecho → Copiar para Discord.)
+- `src/ui/logos.rs`: logos que no trae Segoe MDL2 (el de Discord), dibujados una vez como textura chica.
 
 ## Probar
 
@@ -115,12 +115,13 @@ Ver `README.md` para el plan por fases.
   el clip, el "(editado)" y el "(comprimido)"). `KAIRO_CAPTURA_CLIP=<mp4>` + `KAIRO_CAPTURA_MODO=ver|editar|comprimir`
   con `--captura-ui biblioteca` saca el visor con ese clip (`KAIRO_CAPTURA_RECORTE=2,6` pone un recorte).
   `--prueba-medios` también manda 100 búsquedas seguidas sonando: tiene que quedar en la última.
-- `--prueba-discord <clip>` deja el clip listo para Discord (achica la copia si pesa más de 10 MB), revisa el peso
+- `--prueba-discord <clip>` deja el clip listo para Discord (achica la copia si pesa más de 20 MB), revisa el peso
   y lo copia al portapapeles (`Get-Clipboard -Format FileDropList` lo muestra). Cambia el portapapeles de la persona.
   `KAIRO_CAPTURA_DISCORD=<n>` con `--captura-ui biblioteca` muestra la tarjeta n achicándose.
-- Arrastrar necesita el mouse de verdad: no moverlo con scripts si la PC está en uso (mirar antes
-  `GetLastInputInfo`) y nunca soltar nada sobre Discord u otra ventana de la persona. Sin mouse,
-  `KAIRO_PRUEBA_BUCLE=1` con `--captura-ui biblioteca` arma el paquete y corre un bucle anidado como el del
-  arrastre: el registro tiene que decir cuántos cuadros dibujó adentro y la captura tiene que terminar.
+- `--prueba-discord <clip> sin-copiar` no toca el portapapeles (úsalo si la persona está usando la PC).
+- No mover el mouse de Windows con scripts para probar (la persona puede estar usando la PC). Para lo que se hace
+  con el mouse, un mouse de mentira solo adentro de egui: `KAIRO_PRUEBA_MARCO=x0,y0,x1,y1[,soltar|menu]` con
+  `--captura-ui biblioteca` arrastra un recuadro de selección (en puntos de la ventana; con `soltar` lo suelta) o,
+  con `menu`, hace clic derecho en (x0, y0). Con 1280x780, la primera fila de tarjetas va de y≈253 a 483.
 - `--prueba-tira <mp4> <png> <y> <alto> <n>` apila una franja de `n` cuadros del clip: sirve para ver un video que
   manda la persona (por ejemplo, cómo se mueve una barra) sin abrirlo entero. Borrar la imagen después.

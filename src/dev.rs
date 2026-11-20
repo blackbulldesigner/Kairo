@@ -97,7 +97,8 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
         return Some(informar(prueba_medios(args.get(k + 1)?)));
     }
     if let Some(k) = pos("--prueba-discord") {
-        return Some(informar(prueba_discord(args.get(k + 1)?)));
+        let copiar = args.get(k + 2).map(|s| s.as_str()) != Some("sin-copiar");
+        return Some(informar(prueba_discord(args.get(k + 1)?, copiar)));
     }
     if let Some(k) = pos("--prueba-actualizacion") {
         return Some(informar(prueba_actualizacion(args.get(k + 1).map(|s| s.as_str()))));
@@ -659,9 +660,9 @@ fn guardar_png(ruta: &Path, w: u32, h: u32, rgba: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Deja el clip listo para Discord (si pesa más de 10 MB, achica la copia), revisa el peso y lo copia al
+/// Deja el clip listo para Discord (si pesa más de 20 MB, achica la copia), revisa el peso y lo copia al
 /// portapapeles: después, `Get-Clipboard -Format FileDropList` tiene que mostrar ese archivo.
-fn prueba_discord(ruta: &str) -> Result<()> {
+fn prueba_discord(ruta: &str, copiar: bool) -> Result<()> {
     use crate::medios::discord;
     let ruta = Path::new(ruta);
     let listo = match discord::listo(ruta) {
@@ -688,9 +689,11 @@ fn prueba_discord(ruta: &str) -> Result<()> {
     let peso = std::fs::metadata(&listo)?.len();
     let info = crate::medios::info(&listo)?;
     println!("{} · {:.2} MB · {}x{} · {:.1} s · {} pista(s) de audio", listo.display(), peso as f64 / 1e6, info.ancho, info.alto, info.duracion, info.pistas_audio);
-    anyhow::ensure!(peso <= discord::MAXIMO, "pesa más de 10 MB");
+    anyhow::ensure!(peso <= discord::MAXIMO, "pesa más de 20 MB");
     anyhow::ensure!(discord::listo(ruta).as_deref() == Some(listo.as_path()), "listo() no encuentra la copia");
-    crate::compartir::copiar(&[listo]).map_err(|e| anyhow::anyhow!(e))?;
-    println!("copiado al portapapeles");
+    if copiar {
+        crate::compartir::copiar(&[listo]).map_err(|e| anyhow::anyhow!(e))?;
+        println!("copiado al portapapeles");
+    }
     Ok(())
 }

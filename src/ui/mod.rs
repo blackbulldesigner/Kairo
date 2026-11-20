@@ -7,6 +7,7 @@ mod app;
 pub mod biblioteca;
 pub mod captura;
 pub mod instalador;
+mod logos;
 mod pagina_biblioteca;
 mod paginas;
 pub mod tema;

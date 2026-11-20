@@ -3,7 +3,7 @@
 use eframe::egui::{self, pos2, text::LayoutJob, vec2, Align2, Color32, CursorIcon, FontId, Rect, RichText, Rounding, Sense, Stroke, TextFormat, Ui};
 
 use super::app::App;
-use super::biblioteca::{hace_cuanto, texto_duracion, Clip, Orden};
+use super::biblioteca::{hace_cuanto, texto_duracion, Clip, Marco, Orden};
 use super::animar;
 use super::tema::*;
 use super::visor::Modo;
@@ -12,6 +12,17 @@ use crate::config::{texto_bytes, CualAtajo};
 
 const SEPARACION: f32 = 14.0;
 const ANCHO_MINIMO: f32 = 250.0;
+
+/// Alto de una tarjeta de ese ancho: la miniatura en 16:9 y dos renglones abajo.
+fn alto_tarjeta(ancho: f32) -> f32 {
+    (ancho * 9.0 / 16.0).round() + 62.0
+}
+
+/// Un renglón del menú con su columna de ícono (vacía si no lleva), como los menús de Windows.
+fn item_menu(ui: &mut Ui, logo: &egui::TextureHandle, con_logo: bool, texto: &str) -> egui::Response {
+    let tinte = if con_logo { Color32::WHITE } else { Color32::TRANSPARENT };
+    ui.add(egui::Button::image_and_text(egui::Image::new((logo.id(), vec2(16.0, 16.0))).tint(tinte), texto))
+}
 
 /// Texto en una sola línea, cortado con "…" si no entra.
 fn una_linea(ui: &Ui, texto: &str, fuente: FontId, color: Color32, ancho: f32) -> std::sync::Arc<egui::Galley> {
@@ -93,13 +104,6 @@ impl App {
                 self.biblioteca.seleccion.extend(primeros);
             }
         }
-        // `KAIRO_PRUEBA_BUCLE=1`: un bucle de mensajes anidado como el de arrastrar (ver `compartir`).
-        if cfg!(feature = "dev") && std::env::var("KAIRO_PRUEBA_BUCLE").is_ok() {
-            static HECHO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-            if !HECHO.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                crate::compartir::probar_bucle_anidado(ui.ctx(), 2.0);
-            }
-        }
         // `KAIRO_CAPTURA_DISCORD=<n>`: el clip número n (desde 1) se muestra achicándose para Discord.
         if cfg!(feature = "dev") && self.biblioteca.discord.is_none() {
             if let Some(n) = std::env::var("KAIRO_CAPTURA_DISCORD").ok().and_then(|n| n.parse::<usize>().ok()) {
@@ -114,7 +118,11 @@ impl App {
                 self.biblioteca.seleccion.clear();
             }
         }
-        if !self.biblioteca.seleccion.is_empty() {
+        let barra = match &self.biblioteca.marco {
+            Some(m) => m.barra,
+            None => !self.biblioteca.seleccion.is_empty(),
+        };
+        if barra {
             let n = self.biblioteca.seleccion.len();
             let peso: u64 = self.biblioteca.clips.iter().filter(|c| self.biblioteca.seleccion.contains(&c.ruta)).map(|c| c.tamano).sum();
             let (mut todos, mut borrar, mut cancelar) = (false, false, false);
@@ -190,29 +198,45 @@ impl App {
         let ancho = ui.available_width();
         let columnas = (((ancho + SEPARACION) / (ANCHO_MINIMO + SEPARACION)).floor() as usize).max(1);
         let ancho_tarjeta = (ancho - SEPARACION * (columnas - 1) as f32) / columnas as f32;
+        // El fondo de la cuadrícula (debajo de las tarjetas): arrastrar desde un hueco también dibuja el
+        // recuadro, y un clic en un hueco deja de seleccionar, como en el escritorio.
+        let origen = ui.cursor().min;
+        let alto = clips.len().div_ceil(columnas) as f32 * (alto_tarjeta(ancho_tarjeta) + SEPARACION);
+        let fondo = ui.interact(Rect::from_min_size(origen, vec2(ancho, alto)), ui.id().with("fondo_clips"), Sense::click_and_drag());
+        let mut empezo = fondo.drag_started_by(egui::PointerButton::Primary);
+        let mut zonas = Vec::with_capacity(clips.len());
         for fila_clips in clips.chunks(columnas) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = SEPARACION;
                 for clip in fila_clips {
-                    self.tarjeta_clip(ui, clip, ancho_tarjeta);
+                    let (zona, arrastre) = self.tarjeta_clip(ui, clip, ancho_tarjeta);
+                    zonas.push((clip.ruta.clone(), zona));
+                    empezo |= arrastre;
                 }
             });
             ui.add_space(SEPARACION);
         }
+        if fondo.clicked() && !ui.input(|i| i.modifiers.ctrl) {
+            self.biblioteca.seleccion.clear();
+        }
+        self.recuadro_de_seleccion(ui, origen, empezo, &zonas);
 
         self.dialogos_biblioteca(ui.ctx());
     }
 
-    fn tarjeta_clip(&mut self, ui: &mut Ui, clip: &Clip, ancho: f32) {
+    /// Dibuja la tarjeta; devuelve su zona y si empezó a arrastrarse (para el recuadro de selección).
+    fn tarjeta_clip(&mut self, ui: &mut Ui, clip: &Clip, ancho: f32) -> (Rect, bool) {
         let alto_imagen = (ancho * 9.0 / 16.0).round();
-        // Clic para verla y arrastrar para sacarla de la ventana (a Discord, a una carpeta).
-        let (rect, resp) = ui.allocate_exact_size(vec2(ancho, alto_imagen + 62.0), Sense::click_and_drag());
+        // Clic para verla; arrastrar (desde una tarjeta o un hueco) dibuja el recuadro de selección.
+        let (rect, resp) = ui.allocate_exact_size(vec2(ancho, alto_tarjeta(ancho)), Sense::click_and_drag());
+        let salida = (rect, resp.drag_started_by(egui::PointerButton::Primary));
         if !ui.is_rect_visible(rect) {
-            return; // fuera de la vista: ni se dibuja ni se pide la miniatura
+            return salida; // fuera de la vista: ni se dibuja ni se pide la miniatura
         }
         // Para las capturas de prueba: `KAIRO_CAPTURA_HOVER=<nombre>` muestra ese clip con el mouse encima.
         let forzado = cfg!(feature = "dev") && std::env::var("KAIRO_CAPTURA_HOVER").is_ok_and(|n| n == clip.nombre);
-        let hover = resp.hovered() || forzado;
+        // (Mientras se dibuja el recuadro, ninguna tarjeta se levanta.)
+        let hover = (resp.hovered() && self.biblioteca.marco.is_none()) || forzado;
         let h = if forzado { 1.0 } else { animar::hacia(ui.ctx(), resp.id.with("h"), hover) };
         // Al pasar el mouse la tarjeta sube un poco y gana sombra y borde azul (solo se dibuja más arriba: la
         // zona de clic queda igual, así no tiembla).
@@ -323,9 +347,9 @@ impl App {
         p.galley(pos2(x, imagen.bottom() + 32.0), meta, SECUNDARIO);
 
         let resp = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(if modo_seleccion {
-            "Clic para seleccionar o sacar de la selección"
+            "Clic para seleccionar o sacar de la selección · arrastra para seleccionar varios"
         } else {
-            "Clic para verlo · arrástralo a Discord o a una carpeta · Ctrl+clic para seleccionar · clic derecho para más opciones"
+            "Clic para verlo · arrastra para seleccionar varios · clic derecho para más opciones"
         });
         if resp.clicked() {
             // Seleccionando (o con Ctrl), el clic suma o saca de la selección; si no, abre el clip.
@@ -335,70 +359,104 @@ impl App {
                 self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Ver);
             }
         }
-        // Arrastrarlo afuera: el archivo (o, si pesa más de 10 MB, su copia para Discord).
-        if resp.drag_started_by(egui::PointerButton::Primary) {
-            self.compartir_clip(ui.ctx(), &clip.ruta, true);
-        }
         resp.context_menu(|ui| {
-            if ui.button("Ver").clicked() {
+            let logo = super::logos::discord(ui.ctx());
+            if item_menu(ui, &logo, false, "Ver").clicked() {
                 self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Ver);
                 ui.close_menu();
             }
-            if ui.button("Editar (recortar y pistas)").clicked() {
+            if item_menu(ui, &logo, false, "Editar (recortar y pistas)").clicked() {
                 self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Editar);
                 ui.close_menu();
             }
-            if ui.button("Comprimir…").clicked() {
+            if item_menu(ui, &logo, false, "Comprimir…").clicked() {
                 self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Comprimir);
                 ui.close_menu();
             }
             if para_discord.is_some() {
-                if ui.button("Cancelar la copia para Discord").clicked() {
+                if item_menu(ui, &logo, true, "Cancelar la copia para Discord").clicked() {
                     if let Some(d) = &self.biblioteca.discord {
                         d.cancelar.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                     ui.close_menu();
                 }
-            } else if ui.button("Copiar para Discord").on_hover_text("Si pesa más de 10 MB, primero se achica una copia").clicked() {
-                self.compartir_clip(ui.ctx(), &clip.ruta, false);
+            } else if item_menu(ui, &logo, true, "Copiar para Discord").on_hover_text("Si pesa más de 20 MB, primero se achica una copia").clicked() {
+                self.copiar_para_discord(ui.ctx(), &clip.ruta);
                 ui.close_menu();
             }
-            if ui.button("Abrir con el reproductor de Windows").clicked() {
+            if item_menu(ui, &logo, false, "Abrir con el reproductor de Windows").clicked() {
                 crate::abrir::archivo(&clip.ruta);
                 ui.close_menu();
             }
-            if ui.button(if clip.favorito { "Quitar de favoritos" } else { "Marcar como favorito" }).clicked() {
+            if item_menu(ui, &logo, false, if clip.favorito { "Quitar de favoritos" } else { "Marcar como favorito" }).clicked() {
                 self.biblioteca.alternar_favorito(&clip.ruta);
                 ui.close_menu();
             }
             ui.separator();
-            if ui.button("Mostrar en la carpeta").clicked() {
+            if item_menu(ui, &logo, false, "Mostrar en la carpeta").clicked() {
                 mostrar_en_carpeta(&clip.ruta);
                 ui.close_menu();
             }
-            if ui.button("Renombrar…").clicked() {
+            if item_menu(ui, &logo, false, "Renombrar…").clicked() {
                 self.biblioteca.renombrando = Some((clip.ruta.clone(), clip.nombre.clone()));
                 ui.close_menu();
             }
             ui.separator();
-            if ui.button("Mandar a la Papelera…").clicked() {
+            if item_menu(ui, &logo, false, "Mandar a la Papelera…").clicked() {
                 self.biblioteca.borrando = Some(clip.ruta.clone());
                 ui.close_menu();
             }
         });
+        salida
     }
 
-    /// Arrastrar (`arrastrar`) o copiar un clip para mandarlo a Discord. Si pesa más de 10 MB, primero se
-    /// achica una copia y, cuando está, se copia sola al portapapeles.
-    fn compartir_clip(&mut self, ctx: &egui::Context, ruta: &std::path::Path, arrastrar: bool) {
+    /// El recuadro de selección: se arrastra desde una tarjeta o un hueco y selecciona las tarjetas que toca
+    /// (con Ctrl, se suma a lo que ya estaba). Cerca del borde de arriba o de abajo, la lista se desplaza sola.
+    fn recuadro_de_seleccion(&mut self, ui: &mut Ui, origen: egui::Pos2, empezo: bool, zonas: &[(std::path::PathBuf, Rect)]) {
+        if empezo {
+            if let Some(p) = ui.input(|i| i.pointer.press_origin()) {
+                let ctrl = ui.input(|i| i.modifiers.ctrl);
+                let base = if ctrl { self.biblioteca.seleccion.clone() } else { Default::default() };
+                let barra = !self.biblioteca.seleccion.is_empty();
+                self.biblioteca.marco = Some(Marco { desde: p - origen, base, barra });
+            }
+        }
+        let Some(marco) = &self.biblioteca.marco else { return };
+        let (apretado, puntero) = ui.input(|i| (i.pointer.primary_down(), i.pointer.interact_pos()));
+        let Some(puntero) = puntero.filter(|_| apretado) else {
+            // Se soltó: la selección queda como estaba.
+            self.biblioteca.marco = None;
+            return;
+        };
+        let r = Rect::from_two_pos(origen + marco.desde, puntero);
+        let mut seleccion = marco.base.clone();
+        seleccion.extend(zonas.iter().filter(|(_, z)| z.intersects(r)).map(|(ruta, _)| ruta.clone()));
+        self.biblioteca.seleccion = seleccion;
+        // Encima de las tarjetas: azul transparente con borde.
+        ui.painter().rect(r, 3.0, ACENTO.gamma_multiply(0.16), Stroke::new(1.0_f32, ACENTO));
+        // Cerca del borde de la vista, la lista se desplaza sola (más rápido cuanto más cerca del borde o afuera).
+        const ZONA: f32 = 48.0;
+        let vista = ui.clip_rect();
+        let dy = if puntero.y > vista.bottom() - ZONA {
+            -((puntero.y - (vista.bottom() - ZONA)) / ZONA).min(2.0) * 14.0
+        } else if puntero.y < vista.top() + ZONA {
+            ((vista.top() + ZONA - puntero.y) / ZONA).min(2.0) * 14.0
+        } else {
+            0.0
+        };
+        if dy != 0.0 {
+            ui.scroll_with_delta(vec2(0.0, dy));
+        }
+        ui.ctx().request_repaint();
+    }
+
+    /// Copia el clip al portapapeles para pegarlo en Discord. Si pesa más de 20 MB, primero se achica una
+    /// copia y, cuando está, se copia sola.
+    fn copiar_para_discord(&mut self, ctx: &egui::Context, ruta: &std::path::Path) {
         if let Some(listo) = crate::medios::discord::listo(ruta) {
-            if arrastrar {
-                crate::compartir::arrastrar(&listo);
-            } else {
-                match crate::compartir::copiar(&[listo]) {
-                    Ok(()) => self.avisar("Copiado: pégalo en Discord (o en una carpeta) con Ctrl+V.", false),
-                    Err(e) => self.avisar(e, true),
-                }
+            match crate::compartir::copiar(&[listo]) {
+                Ok(()) => self.avisar("Copiado: pégalo en Discord (o en una carpeta) con Ctrl+V.", false),
+                Err(e) => self.avisar(e, true),
             }
             return;
         }
@@ -407,7 +465,7 @@ impl App {
             Some((false, _)) => self.avisar("Espera a que termine el otro clip que se está achicando para Discord.", false),
             None => {
                 self.biblioteca.preparar_para_discord(ruta, ctx);
-                self.avisar_por("Pesa más de 10 MB: lo achico para Discord. Cuando esté, se copia solo para que lo pegues con Ctrl+V.", false, 6.0);
+                self.avisar_por("Pesa más de 20 MB: lo achico para Discord. Cuando esté, se copia solo para que lo pegues con Ctrl+V.", false, 6.0);
             }
         }
     }
@@ -420,7 +478,7 @@ impl App {
             Some(Ok(copia)) => {
                 let peso = std::fs::metadata(&copia).map(|m| m.len()).unwrap_or(0);
                 match crate::compartir::copiar(&[copia]) {
-                    Ok(()) => self.avisar_por(format!("Listo para Discord ({}): pégalo en el chat con Ctrl+V, o arrastra el clip.", texto_bytes(peso)), false, 8.0),
+                    Ok(()) => self.avisar_por(format!("Listo para Discord ({}): pégalo en el chat con Ctrl+V.", texto_bytes(peso)), false, 8.0),
                     Err(e) => self.avisar(e, true),
                 }
             }

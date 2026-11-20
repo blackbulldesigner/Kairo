@@ -44,6 +44,60 @@ pub fn desde_args(args: &[String]) -> Option<Pedido> {
     Some(Pedido { pagina, tamano, modo_juego, programas, avanzado, limpieza, ruta, cuadros: 0, pedida: false })
 }
 
+/// `KAIRO_PRUEBA_MARCO=x0,y0,x1,y1[,soltar]` (con `--captura-ui biblioteca`): un mouse de mentira, solo adentro
+/// de egui (el de Windows no se mueve), aprieta en (x0, y0), arrastra hasta (x1, y1) y, con `soltar`, suelta.
+/// Con `menu` en vez de `soltar`, solo hace clic derecho en (x0, y0). La captura espera a que termine.
+pub struct PruebaMarco {
+    desde: egui::Pos2,
+    hasta: egui::Pos2,
+    soltar: bool,
+    menu: bool,
+    cuadro: u32,
+}
+
+impl PruebaMarco {
+    const EMPIEZA: u32 = 20;
+    const PASOS: u32 = 20;
+
+    pub fn desde_env() -> Option<PruebaMarco> {
+        if !cfg!(feature = "dev") {
+            return None;
+        }
+        let v: Vec<String> = std::env::var("KAIRO_PRUEBA_MARCO").ok()?.split(',').map(|s| s.trim().to_string()).collect();
+        let n = |i: usize| v.get(i)?.parse::<f32>().ok();
+        Some(PruebaMarco { desde: egui::pos2(n(0)?, n(1)?), hasta: egui::pos2(n(2)?, n(3)?), soltar: v.get(4).is_some_and(|s| s == "soltar"), menu: v.get(4).is_some_and(|s| s == "menu"), cuadro: 0 })
+    }
+
+    /// Suma los eventos del mouse de mentira para este cuadro.
+    pub fn paso(&mut self, raw: &mut egui::RawInput) {
+        self.cuadro += 1;
+        let c = self.cuadro;
+        let boton = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        if self.menu {
+            let derecho = |pressed| egui::Event::PointerButton { pos: self.desde, button: egui::PointerButton::Secondary, pressed, modifiers: Default::default() };
+            match c {
+                x if x == Self::EMPIEZA => raw.events.extend([egui::Event::PointerMoved(self.desde), derecho(true)]),
+                x if x == Self::EMPIEZA + 1 => raw.events.push(derecho(false)),
+                _ => {}
+            }
+            return;
+        }
+        if c == Self::EMPIEZA {
+            raw.events.push(egui::Event::PointerMoved(self.desde));
+            raw.events.push(boton(self.desde, true));
+        } else if c > Self::EMPIEZA && c <= Self::EMPIEZA + Self::PASOS {
+            let t = (c - Self::EMPIEZA) as f32 / Self::PASOS as f32;
+            raw.events.push(egui::Event::PointerMoved(self.desde.lerp(self.hasta, t)));
+        } else if c == Self::EMPIEZA + Self::PASOS + 1 && self.soltar {
+            raw.events.push(boton(self.hasta, false));
+        }
+    }
+
+    pub fn terminada(&self) -> bool {
+        self.cuadro > Self::EMPIEZA + Self::PASOS + 3
+    }
+}
+
 /// Con `--captura-ui biblioteca`, `KAIRO_CAPTURA_CLIP=<mp4>` abre ese clip en el visor y `KAIRO_CAPTURA_MODO`
 /// ("ver", "editar" o "comprimir") elige la pestaña.
 pub fn clip_pedido() -> Option<(PathBuf, super::visor::Modo)> {

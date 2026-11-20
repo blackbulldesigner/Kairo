@@ -74,6 +74,19 @@ pub struct Biblioteca {
     reparados: HashSet<PathBuf>,
     /// Copia para Discord que se está comprimiendo (una a la vez).
     pub discord: Option<ParaDiscord>,
+    /// Recuadro de selección que se está dibujando con el mouse.
+    pub marco: Option<Marco>,
+}
+
+/// Recuadro de selección, como en el escritorio de Windows.
+pub struct Marco {
+    /// Dónde empezó, contado desde la esquina de la cuadrícula: si la lista se desplaza, el inicio se mueve con ella.
+    pub desde: egui::Vec2,
+    /// Lo que estaba seleccionado antes (con Ctrl, el recuadro se suma a eso).
+    pub base: HashSet<PathBuf>,
+    /// Si la barra de selección se veía al empezar: mientras se arrastra no aparece ni desaparece, así las
+    /// tarjetas no saltan debajo del mouse.
+    pub barra: bool,
 }
 
 /// Un clip que se está achicando para Discord, en otro hilo.
@@ -115,6 +128,7 @@ impl Biblioteca {
             seleccion: HashSet::new(),
             borrando_seleccion: false,
             discord: None,
+            marco: None,
         }
     }
 

@@ -94,6 +94,8 @@ pub struct App {
     /// El video del visor ocupa toda la pantalla (sin barra de arriba ni de abajo).
     pub(super) pantalla_completa: bool,
     /// Guardado → Limpieza: (carpeta y límites con que se calculó, hasta cuándo vale, resumen).
+    /// Para las pruebas: el mouse de mentira del recuadro de selección (`KAIRO_PRUEBA_MARCO`).
+    prueba_marco: Option<super::captura::PruebaMarco>,
     pub(super) limpieza_resumen: Option<((std::path::PathBuf, crate::config::Limpieza), f64, super::paginas::ResumenLimpieza)>,
 }
 
@@ -167,6 +169,7 @@ impl App {
             silencio: super::visor::leer_volumen().1,
             pantalla_completa: false,
             limpieza_resumen: None,
+            prueba_marco: super::captura::PruebaMarco::desde_env(),
         }
     }
 
@@ -552,8 +555,16 @@ impl eframe::App for App {
                 && match &self.visor {
                     Some(v) if self.pagina == Pagina::Biblioteca => v.listo(),
                     _ => self.pagina != Pagina::Biblioteca || self.biblioteca.pendientes() == 0,
-                };
+                }
+                && self.prueba_marco.as_ref().map_or(true, |p| p.terminada());
             c.paso(ctx, listo);
+        }
+    }
+
+    /// Para las pruebas: el mouse de mentira entra como si fuera el de verdad.
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(p) = &mut self.prueba_marco {
+            p.paso(raw);
         }
     }
 
