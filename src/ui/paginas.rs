@@ -797,7 +797,9 @@ impl App {
         self.tarjeta_actualizaciones(ui);
         let novedades = version::novedades();
         tarjeta(ui, "Esta versión", |ui| {
-            fila_info(ui, "Versión", &format!("Kairo {} (vista previa)", version::VERSION));
+            // (Las 0.x eran vista previa; desde la 1.0, no.)
+            let previa = if version::VERSION.starts_with("0.") { " (vista previa)" } else { "" };
+            fila_info(ui, "Versión", &format!("Kairo {}{previa}", version::VERSION));
             separador(ui);
             let compilacion = if version::COMMIT.is_empty() {
                 "Sin datos de git".to_string()

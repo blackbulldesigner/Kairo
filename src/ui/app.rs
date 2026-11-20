@@ -361,14 +361,17 @@ impl App {
         ui.horizontal_centered(|ui| {
             logo(ui, 24.0);
             ui.add_space(4.0);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                ui.add_space(1.0);
-                ui.label(RichText::new("Kairo").family(semibold()).size(14.5).color(TEXTO));
-                // Siempre a la vista: para saber de un vistazo qué versión es este exe.
-                let color = if crate::version::con_cambios_sin_commit() { AMARILLO } else { TENUE };
-                ui.label(RichText::new(crate::version::corta()).size(10.5).color(color));
-            });
+            // "Kairo" y la versión en dos renglones, como un solo bloque: así queda centrado con el logo y las
+            // pestañas (un `ui.vertical` arrancaba arriba de la barra y se veía corrido hacia arriba).
+            // La versión siempre a la vista: para saber de un vistazo qué versión es este exe.
+            let color = if crate::version::con_cambios_sin_commit() { AMARILLO } else { TENUE };
+            let nombre = ui.fonts(|f| f.layout_no_wrap("Kairo".to_string(), egui::FontId::new(14.5, semibold()), TEXTO));
+            let version = ui.fonts(|f| f.layout_no_wrap(crate::version::corta(), egui::FontId::proportional(10.5), color));
+            let alto_nombre = nombre.size().y;
+            let tam = egui::vec2(nombre.size().x.max(version.size().x), alto_nombre + version.size().y);
+            let (zona, _) = ui.allocate_exact_size(tam, egui::Sense::hover());
+            ui.painter().galley(zona.min, nombre, TEXTO);
+            ui.painter().galley(zona.min + egui::vec2(0.0, alto_nombre), version, color);
             ui.add_space(18.0);
             let nombres: Vec<&str> = Pagina::TODAS.iter().map(|p| p.nombre()).collect();
             let actual = Pagina::TODAS.iter().position(|p| *p == self.pagina).unwrap_or(0);
