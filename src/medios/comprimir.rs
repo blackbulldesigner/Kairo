@@ -13,8 +13,8 @@ use super::exportar::{agregar_aac, escritor_mp4};
 use super::{InfoClip, SEGUNDO};
 
 const AUDIO_KBPS: u32 = 128;
-/// Discord deja subir hasta 10 MB sin Nitro: se apunta un poco más abajo.
-const LIMITE_DISCORD: f64 = 9_500_000.0;
+/// Discord deja subir hasta 20 MB sin Nitro (desde agosto de 2026; antes, 10): se apunta un poco más abajo.
+const LIMITE_DISCORD: f64 = 19_000_000.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Opcion {
@@ -22,7 +22,7 @@ pub enum Opcion {
     Compartir,
     /// 720p, 5 Mbps.
     Liviano,
-    /// Menos de 10 MB.
+    /// Menos de 20 MB.
     Discord,
 }
 
@@ -41,7 +41,7 @@ impl Opcion {
         match self {
             Opcion::Compartir => "1080p a 10 Mbps: se ve casi igual y pesa bastante menos.",
             Opcion::Liviano => "720p a 5 Mbps: para mandar por WhatsApp o subir rápido.",
-            Opcion::Discord => "Menos de 10 MB, lo que deja subir Discord sin Nitro.",
+            Opcion::Discord => "Menos de 20 MB, lo que deja subir Discord sin Nitro.",
         }
     }
 }
@@ -55,9 +55,9 @@ pub fn plan(opcion: Opcion, info: &InfoClip) -> Result<(u32, u32)> {
             let total = LIMITE_DISCORD * 8.0 / info.duracion.max(0.1);
             let video = total - (AUDIO_KBPS * 1000) as f64 * 1.05;
             if video < 300_000.0 {
-                bail!("el clip es muy largo para pesar menos de 10 MB: recórtalo primero (en Editar)");
+                bail!("el clip es muy largo para pesar menos de 20 MB: recórtalo primero (en Editar)");
             }
-            let alto = if video >= 2_500_000.0 { 720 } else { 480 };
+            let alto = if video >= 1_800_000.0 { 720 } else { 480 };
             (alto, video.min(6_000_000.0) as u32)
         }
     };

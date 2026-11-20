@@ -1,6 +1,6 @@
-//! Clips para Discord, que deja subir hasta 10 MB sin Nitro. Si el clip pesa más, se comprime una copia en la
-//! carpeta temporal (con el mismo nombre, para que en el chat se vea igual) y esa es la que se arrastra o se
-//! copia. El clip de la biblioteca no se toca.
+//! Clips para Discord, que deja subir hasta 20 MB sin Nitro. Si el clip pesa más, se comprime una copia en la
+//! carpeta temporal (con el mismo nombre, para que en el chat se vea igual) y esa es la que se copia al
+//! portapapeles. El clip de la biblioteca no se toca.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 use super::comprimir::{self, Opcion};
 
 /// Lo más que deja subir Discord sin Nitro.
-pub const MAXIMO: u64 = 10_000_000;
+pub const MAXIMO: u64 = 20_000_000;
 
 /// Carpeta de las copias: `%TEMP%\Kairo Discord`.
 fn carpeta() -> PathBuf {
@@ -26,7 +26,7 @@ fn ruta_copia(clip: &Path) -> PathBuf {
     carpeta().join(format!("{:016x}", h.finish())).join(clip.file_name().unwrap_or_default())
 }
 
-/// El archivo para mandar a Discord, si ya está: el clip mismo si pesa hasta 10 MB, o su copia comprimida
+/// El archivo para mandar a Discord, si ya está: el clip mismo si pesa hasta 20 MB, o su copia comprimida
 /// (si es más nueva que el clip).
 pub fn listo(clip: &Path) -> Option<PathBuf> {
     let original = std::fs::metadata(clip).ok()?;
