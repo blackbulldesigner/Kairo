@@ -201,7 +201,10 @@ impl App {
         // El fondo de la cuadrícula (debajo de las tarjetas): arrastrar desde un hueco también dibuja el
         // recuadro, y un clic en un hueco deja de seleccionar, como en el escritorio.
         let origen = ui.cursor().min;
-        let alto = clips.len().div_ceil(columnas) as f32 * (alto_tarjeta(ancho_tarjeta) + SEPARACION);
+        // Hasta abajo de la ventana aunque las tarjetas no lleguen (con la ventana grande entran en una fila y el
+        // espacio vacío de abajo también tiene que servir para empezar el recuadro).
+        let filas = clips.len().div_ceil(columnas) as f32 * (alto_tarjeta(ancho_tarjeta) + SEPARACION);
+        let alto = filas.max(ui.clip_rect().bottom() - origen.y);
         let fondo = ui.interact(Rect::from_min_size(origen, vec2(ancho, alto)), ui.id().with("fondo_clips"), Sense::click_and_drag());
         let mut empezo = fondo.drag_started_by(egui::PointerButton::Primary);
         let mut zonas = Vec::with_capacity(clips.len());
