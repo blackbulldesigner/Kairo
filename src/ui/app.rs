@@ -68,7 +68,7 @@ pub struct App {
     pub(super) capturando: Option<CualAtajo>,
     /// Mensaje del pie: (texto, es error, hasta cuándo se muestra).
     aviso: Option<(String, bool, f64)>,
-    ahora: f64,
+    pub(super) ahora: f64,
     captura: Option<Pedido>,
     /// Lo que informa la grabadora (se relee cada segundo). None = la grabadora está cerrada.
     pub(super) estado: Option<Estado>,
@@ -78,7 +78,10 @@ pub struct App {
     pub(super) autoinicio: bool,
     /// Página (y si hay un clip abierto) del cuadro anterior, y cuándo cambió: para la animación de entrada.
     vista_anterior: (Pagina, bool),
-    cambio_de_vista: f64,
+    pub(super) cambio_de_vista: f64,
+    /// La bienvenida (la primera vez que se abre Kairo): en qué paso va, y cuándo se llegó a él (para animar).
+    pub(super) bienvenida: Option<usize>,
+    pub(super) bienvenida_desde: f64,
     /// Programas abiertos (para elegir el juego a mano) y cuándo volver a leerlos.
     pub(super) programas: Vec<crate::grabadora::juego::Programa>,
     pub(super) programas_hasta: f64,
@@ -119,6 +122,12 @@ impl App {
             });
         }
 
+        // La primera vez (sin ajustes guardados), la bienvenida. En las capturas, `KAIRO_CAPTURA_BIENVENIDA=<paso>`.
+        let bienvenida = if captura.is_some() {
+            std::env::var("KAIRO_CAPTURA_BIENVENIDA").ok().and_then(|p| p.parse().ok())
+        } else {
+            (!crate::config::existe()).then_some(0)
+        };
         let mut cfg = Config::cargar();
         if captura.as_ref().is_some_and(|c| c.modo_juego) {
             cfg.modo = crate::config::ModoCaptura::Juego;
@@ -165,6 +174,8 @@ impl App {
             autoinicio: crate::autoinicio::activo(),
             vista_anterior: (pagina, false),
             cambio_de_vista: -1.0,
+            bienvenida,
+            bienvenida_desde: -1.0,
             programas: Vec::new(),
             programas_hasta: 0.0,
             biblioteca: super::biblioteca::Biblioteca::new(&cc.egui_ctx),
@@ -307,7 +318,7 @@ impl App {
         self.aviso = Some((texto.into(), error, self.ahora + segundos));
     }
 
-    fn guardar(&mut self) {
+    pub(super) fn guardar(&mut self) {
         match self.cfg.guardar() {
             Ok(()) => {
                 self.guardada = self.cfg.clone();
@@ -488,6 +499,16 @@ impl eframe::App for App {
             self.pantalla_completa = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
+        // La primera vez: la bienvenida, en lugar de todo lo demás.
+        if self.bienvenida.is_some() {
+            self.pantalla_bienvenida(ctx);
+            self.aviso_flotante(ctx, 0.0);
+            if let Some(c) = &mut self.captura {
+                c.paso(ctx, equipo.is_some());
+            }
+            return;
+        }
+
         let completa = self.pantalla_completa;
         if !completa {
         TopBottomPanel::top("barra")

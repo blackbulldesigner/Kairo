@@ -4,6 +4,7 @@
 mod actualizar;
 mod animar;
 mod app;
+mod bienvenida;
 pub mod biblioteca;
 pub mod captura;
 pub mod instalador;

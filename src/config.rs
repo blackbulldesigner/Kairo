@@ -685,6 +685,11 @@ pub fn datos_dir() -> PathBuf {
     std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("Kairo")
 }
 
+/// ¿Ya hay ajustes guardados? (Si no, es la primera vez: la ventana muestra la bienvenida.)
+pub fn existe() -> bool {
+    archivo().exists()
+}
+
 fn archivo() -> PathBuf {
     datos_dir().join("config.json")
 }

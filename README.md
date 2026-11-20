@@ -24,7 +24,8 @@ PCs de escritorio.
   GitHub, comprueba que sea idéntica a la publicada (SHA-256) y la instala sola. Se puede apagar en Acerca de.
 - Para desinstalar: Configuración → Aplicaciones → Kairo. Pregunta si borrar también tus ajustes; los clips
   nunca se borran.
-- Abre Kairo: aparece el ícono de Kairo junto al reloj y se abre la ventana de Kairo en la Biblioteca.
+- Abre Kairo: aparece el ícono de Kairo junto al reloj y se abre la ventana de Kairo. La primera vez, una
+  bienvenida corta te ayuda a elegir el atajo, qué grabar, el micrófono y la carpeta.
 - En la Biblioteca, un clic abre el clip en el reproductor de Kairo (Espacio pausa, ← → saltan 5 s). En
   **Editar** lo recortas y cambias el volumen de cada pista (por ejemplo, sin Discord) y en **Comprimir** lo
   achicas para compartir (también "Para Discord": menos de 20 MB). Siempre se guarda como clip nuevo.

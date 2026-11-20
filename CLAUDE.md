@@ -79,6 +79,10 @@ Ver `README.md` para el plan por fases.
 - `src/grabadora/foto.rs`: la foto del atajo "Sacar foto". El hilo de video copia `ultimo` (el cuadro BGRA) a una
   textura que lee el procesador solo cuando se pide; la bandeja la guarda en PNG en otro hilo, con prioridad baja.
   La Biblioteca muestra los PNG como fotos (`Clip::foto`).
+- `src/ui/bienvenida.rs`: la primera vez que se abre la ventana (sin `config.json`), 5 pasos: hola, atajo y cuánto
+  guardar, qué grabar y micrófono, carpeta y listo. Al terminar o con "Saltar" guarda los ajustes (y ya no aparece).
+  `KAIRO_CAPTURA_BIENVENIDA=<paso>` con `--captura-ui` la muestra en ese paso (sin guardar nada: no tocar el último
+  botón con el mouse de mentira, guardaría los ajustes de la persona).
 - `src/compartir.rs` (solo la ventana): copiar archivos al portapapeles (CF_HDROP), como "Copiar" en el Explorador.
   (Arrastrar clips afuera de la ventana se probó y se sacó: la persona prefiere clic derecho → Copiar para Discord.)
 - `src/ui/logos.rs`: logos que no trae Segoe MDL2 (el de Discord), dibujados una vez como textura chica.
