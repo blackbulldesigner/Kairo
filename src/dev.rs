@@ -96,6 +96,12 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     if let Some(k) = pos("--prueba-medios") {
         return Some(informar(prueba_medios(args.get(k + 1)?)));
     }
+    if let Some(k) = pos("--prueba-fps") {
+        return Some(informar(prueba_fps(&args[k + 1..])));
+    }
+    if let Some(k) = pos("--grabar-fondo") {
+        return Some(informar(grabar_fondo(args.get(k + 1)?.parse().ok()?)));
+    }
     if let Some(k) = pos("--prueba-aviso") {
         let mostrar = args.get(k + 2).map(|s| s.as_str()) == Some("mostrar");
         return Some(informar(prueba_aviso(args.get(k + 1)?, mostrar)));
@@ -802,3 +808,42 @@ fn prueba_foto(ruta: &str) -> Result<()> {
     Ok(())
 }
 
+
+/// La prueba de FPS sin jugar (ver `prueba_fps`): `calibrar` o `medir <segundos> <carga> <archivo.json>`.
+fn prueba_fps(a: &[String]) -> Result<()> {
+    match a.first().map(|s| s.as_str()) {
+        Some("calibrar") => {
+            let c = crate::prueba_fps::calibrar()?;
+            println!("carga {c}");
+            Ok(())
+        }
+        Some("medir") => {
+            let uso = || anyhow!("uso: --prueba-fps medir <segundos> <carga> <archivo.json>");
+            let segundos: f64 = a.get(1).and_then(|s| s.parse().ok()).ok_or_else(uso)?;
+            let carga: u32 = a.get(2).and_then(|s| s.parse().ok()).ok_or_else(uso)?;
+            let salida = a.get(3).ok_or_else(uso)?;
+            let r = crate::prueba_fps::medir(segundos, carga)?;
+            std::fs::write(salida, serde_json::to_string_pretty(&r)?)?;
+            println!("{:.1} fps de promedio · 1 % más bajo {:.1} · {} cuadros", r.fps_promedio, r.bajo_1, r.cuadros);
+            for (g, u) in &r.grabadores {
+                println!("  {g}: procesador {:.2} % · tarjeta {:.1} % · encoder {:.1} % · RAM {:.0} MB", u.cpu, u.gpu, u.encoder, u.ram_mb);
+            }
+            Ok(())
+        }
+        _ => Err(anyhow!("uso: --prueba-fps calibrar | medir <segundos> <carga> <archivo.json>")),
+    }
+}
+
+/// El "Kairo" de la prueba de FPS: graba como la bandeja (con tus ajustes, pero todo el escritorio, para que grabe
+/// la escena de prueba) durante `segundos`, sin guardar nada.
+fn grabar_fondo(segundos: u64) -> Result<()> {
+    iniciar_mf()?;
+    let mut cfg = Config::cargar();
+    cfg.modo = crate::config::ModoCaptura::Escritorio;
+    let g = Grabadora::iniciar(&cfg);
+    std::thread::sleep(Duration::from_secs(segundos));
+    let info = g.info.lock().map(|i| i.clone()).unwrap_or_default();
+    g.detener();
+    println!("grabando: {} · {}", info.grabando, info.detalle);
+    Ok(())
+}

@@ -20,6 +20,8 @@ mod config;
 mod datos_clip;
 #[cfg(feature = "dev")]
 mod dev;
+#[cfg(feature = "dev")]
+mod prueba_fps;
 mod equipo;
 mod estado;
 mod grabadora;

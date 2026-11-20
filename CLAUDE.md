@@ -137,5 +137,12 @@ Ver `README.md` para el plan por fases.
   con el mouse, un mouse de mentira solo adentro de egui: `KAIRO_PRUEBA_MARCO=x0,y0,x1,y1[,soltar|menu|clic]` con
   `--captura-ui biblioteca` arrastra un recuadro de selección (en puntos de la ventana; con `soltar` lo suelta) o,
   con `menu`, hace clic derecho en (x0, y0) y con `clic`, un clic izquierdo (por ejemplo, en un chip). Con 1280x780, la primera fila de tarjetas va de y≈253 a 483.
+- Prueba de FPS sin jugar, Kairo contra Medal: `scripts\comparar-fps.ps1 [-Segundos 60] [-SinMedal]` (compila en
+  `target\medir` con `--release --features dev`). Corre `--prueba-fps calibrar` (carga para ~200 FPS) y
+  `--prueba-fps medir <s> <carga> <json>` (`src/prueba_fps.rs`: escena D3D11 pesada, igual en cada ronda, sin límite
+  de FPS, y el uso de procesador, tarjeta, encoder y RAM de `kairo.exe` y de lo que corre desde `%LOCALAPPDATA%\Medal`,
+  con los contadores de la tarjeta en inglés porque Windows los traduce). Kairo graba con `--grabar-fondo <s>` (tus
+  ajustes, todo el escritorio, sin guardar). Tapa la pantalla: solo con la persona de acuerdo. Medal tiene que
+  grabar la pantalla completa y abrirlo/cerrarlo lo hace la persona (el script pregunta).
 - `--prueba-tira <mp4> <png> <y> <alto> <n>` apila una franja de `n` cuadros del clip: sirve para ver un video que
   manda la persona (por ejemplo, cómo se mueve una barra) sin abrirlo entero. Borrar la imagen después.
