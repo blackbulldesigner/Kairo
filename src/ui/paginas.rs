@@ -251,7 +251,7 @@ impl App {
             }
             if eq.is_some_and(|e| e.es_laptop()) {
                 separador(ui);
-                fila(ui, "Ahorro con batería", Some("Desenchufada, la laptop graba a 720p y en calidad Ligera."), |ui| {
+                fila(ui, "Ahorro con batería", Some("Desenchufada, la laptop graba a 720p, 30 FPS y calidad Ligera: menos trabajo para la tarjeta y más batería. Al enchufarla vuelve a lo de siempre."), |ui| {
                     interruptor(ui, &mut self.cfg.ahorro_bateria, true);
                 });
             }
@@ -555,9 +555,27 @@ impl App {
                 },
             );
             separador(ui);
-            fila(ui, "Sonido al guardar", Some("Un aviso corto para saber que el clip se guardó."), |ui| {
+            fila(ui, "Sonido al guardar", Some("Un sonido corto para saber que el clip (o la foto) se guardó."), |ui| {
                 interruptor(ui, &mut self.cfg.sonido_al_guardar, true);
             });
+            separador(ui);
+            fila(
+                ui,
+                "Aviso en pantalla",
+                Some("Un cartelito arriba a la derecha por 2 segundos al guardar. No sale en tus clips. Apagado, queda solo el sonido."),
+                |ui| {
+                    interruptor(ui, &mut self.cfg.aviso_al_guardar, true);
+                },
+            );
+            separador(ui);
+            fila(
+                ui,
+                "Copias para Discord",
+                Some("Si un clip pesa más de 20 MB, «Copiar para Discord» hace una copia liviana en la carpeta «Para Discord» (la ves en la Biblioteca). Se borra sola después de este tiempo."),
+                |ui| {
+                    segmentos(ui, "discord_minutos", &mut self.cfg.discord_minutos, &[(15, None, "15 min"), (60, None, "1 hora"), (1440, None, "1 día")], None, 32.0);
+                },
+            );
         });
         self.tarjeta_limpieza(ui);
     }
@@ -714,7 +732,7 @@ impl App {
                 }
                 if e.ahorro {
                     separador(ui);
-                    fila_info(ui, "Ahorro con batería", "Activo: 720p y calidad Ligera mientras esté desenchufada.");
+                    fila_info(ui, "Ahorro con batería", "Activo: 720p, 30 FPS y calidad Ligera mientras esté desenchufada.");
                 }
                 if let Some(c) = &e.ultimo_clip {
                     separador(ui);

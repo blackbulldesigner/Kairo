@@ -383,17 +383,20 @@ pub enum CualAtajo {
     Guardar,
     /// Un clip más largo (la duración de "Clip largo" en Grabación).
     GuardarLargo,
+    /// Una foto de lo que se está grabando.
+    Foto,
     Pausa,
     Carpeta,
 }
 
 impl CualAtajo {
-    pub const TODOS: [CualAtajo; 4] = [CualAtajo::Guardar, CualAtajo::GuardarLargo, CualAtajo::Pausa, CualAtajo::Carpeta];
+    pub const TODOS: [CualAtajo; 5] = [CualAtajo::Guardar, CualAtajo::GuardarLargo, CualAtajo::Foto, CualAtajo::Pausa, CualAtajo::Carpeta];
 
     pub fn titulo(self) -> &'static str {
         match self {
             CualAtajo::Guardar => "Guardar clip",
             CualAtajo::GuardarLargo => "Guardar clip largo",
+            CualAtajo::Foto => "Sacar foto",
             CualAtajo::Pausa => "Pausar o reanudar la grabación",
             CualAtajo::Carpeta => "Abrir la carpeta de clips",
         }
@@ -403,6 +406,7 @@ impl CualAtajo {
         match self {
             CualAtajo::Guardar => Some("Guarda los últimos segundos como MP4."),
             CualAtajo::GuardarLargo => Some("Guarda un clip más largo (la duración se elige en Grabación → Clip largo)."),
+            CualAtajo::Foto => Some("Guarda una foto de lo que se está grabando (PNG), que aparece en la Biblioteca."),
             CualAtajo::Pausa => Some("Mientras está en pausa no se usa nada de la tarjeta de video."),
             CualAtajo::Carpeta => None,
         }
@@ -423,7 +427,7 @@ pub struct Config {
     pub calidad: Calidad,
     pub avanzado: VideoAvanzado,
     pub tarjeta: TarjetaGrabacion,
-    /// Laptops: con la batería, graba a 720p y en calidad Ligera.
+    /// Laptops: con la batería, graba a 720p, 30 FPS y en calidad Ligera.
     pub ahorro_bateria: bool,
     pub audio_juego: FuenteAudio,
     pub audio_sistema: FuenteAudio,
@@ -432,6 +436,10 @@ pub struct Config {
     pub programas_audio: Vec<ProgramaAudio>,
     pub carpeta: PathBuf,
     pub sonido_al_guardar: bool,
+    /// Un cartelito en pantalla al guardar un clip o una foto (apagado, queda solo el sonido).
+    pub aviso_al_guardar: bool,
+    /// Las copias para Discord se borran solas después de estos minutos (15, 60 o 1440).
+    pub discord_minutos: u32,
     /// Guardar cada clip en una carpeta con el nombre del juego.
     pub carpeta_por_juego: bool,
     /// Además de la mezcla, cada fuente de audio en su propia pista (para editar).
@@ -445,6 +453,7 @@ pub struct Config {
     pub segundos_largo: u32,
     pub atajo_pausa: Option<Atajo>,
     pub atajo_carpeta: Option<Atajo>,
+    pub atajo_foto: Option<Atajo>,
     /// Buscar versiones nuevas en GitHub (una consulta chica por día).
     pub buscar_actualizaciones: bool,
     /// Dibujar el puntero del mouse en los clips.
@@ -472,6 +481,8 @@ impl Default for Config {
             programas_audio: Vec::new(),
             carpeta: carpeta_videos(),
             sonido_al_guardar: true,
+            aviso_al_guardar: true,
+            discord_minutos: 60,
             carpeta_por_juego: true,
             pistas_separadas: false,
             atajo_guardar: Some(Atajo::tecla_sola("F9")),
@@ -480,6 +491,7 @@ impl Default for Config {
             segundos_largo: 120,
             atajo_pausa: None,
             atajo_carpeta: None,
+            atajo_foto: None,
             buscar_actualizaciones: true,
             mostrar_mouse: false,
             limpieza: Limpieza::default(),
@@ -514,6 +526,9 @@ impl Config {
         }
         if self.fps != 30 {
             self.fps = 60;
+        }
+        if ![15, 60, 1440].contains(&self.discord_minutos) {
+            self.discord_minutos = 60;
         }
         for f in [&mut self.audio_juego, &mut self.audio_sistema, &mut self.audio_mic] {
             f.volumen = f.volumen.min(100);
@@ -576,6 +591,7 @@ impl Config {
             CualAtajo::GuardarLargo => self.atajo_guardar_largo.as_ref(),
             CualAtajo::Pausa => self.atajo_pausa.as_ref(),
             CualAtajo::Carpeta => self.atajo_carpeta.as_ref(),
+            CualAtajo::Foto => self.atajo_foto.as_ref(),
         }
     }
 
@@ -585,6 +601,7 @@ impl Config {
             CualAtajo::GuardarLargo => &mut self.atajo_guardar_largo,
             CualAtajo::Pausa => &mut self.atajo_pausa,
             CualAtajo::Carpeta => &mut self.atajo_carpeta,
+            CualAtajo::Foto => &mut self.atajo_foto,
         }
     }
 
@@ -651,7 +668,12 @@ pub fn texto_duracion(s: u32) -> String {
 /// "75 MB", "1,2 GB".
 pub fn texto_bytes(b: u64) -> String {
     let mb = b as f64 / (1024.0 * 1024.0);
-    if mb < 1000.0 {
+    if mb < 1.0 {
+        // (Fotos chicas: "350 KB" en vez de "0 MB".)
+        format!("{:.0} KB", (b as f64 / 1024.0).max(1.0))
+    } else if mb < 10.0 {
+        format!("{:.1} MB", mb).replace('.', ",")
+    } else if mb < 1000.0 {
         format!("{:.0} MB", mb)
     } else {
         format!("{:.1} GB", mb / 1024.0).replace('.', ",")

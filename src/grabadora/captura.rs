@@ -194,6 +194,8 @@ pub struct Captura {
     /// "Mostrar el mouse" con Desktop Duplication: el puntero y la copia del cuadro donde se dibuja.
     mouse: Option<super::mouse::Mouse>,
     con_mouse: Option<(ID3D11Texture2D, ID3D11RenderTargetView, ID3D11VideoProcessorInputView)>,
+    /// Copia que lee el procesador (para las fotos); se crea con la primera foto.
+    copia_foto: Option<ID3D11Texture2D>,
 }
 
 impl Captura {
@@ -393,6 +395,7 @@ impl Captura {
                 siguiente: 0,
                 mouse,
                 con_mouse,
+                copia_foto: None,
             })
         }
     }
@@ -457,6 +460,42 @@ impl Captura {
                 let _ = cuadro.Close();
                 Ok(())
             }
+        }
+    }
+
+    /// El último cuadro en la memoria, para una foto. Espera a la tarjeta de video (unos milisegundos), pero
+    /// solo pasa cuando se pide una foto.
+    pub fn foto(&mut self) -> Result<super::foto::Imagen> {
+        unsafe {
+            if self.copia_foto.is_none() {
+                let desc = D3D11_TEXTURE2D_DESC {
+                    Width: self.ancho_monitor,
+                    Height: self.alto_monitor,
+                    MipLevels: 1,
+                    ArraySize: 1,
+                    Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                    Usage: D3D11_USAGE_STAGING,
+                    BindFlags: 0,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                    MiscFlags: 0,
+                };
+                let mut t = None;
+                self.dispositivo.CreateTexture2D(&desc, None, Some(&mut t))?;
+                self.copia_foto = t;
+            }
+            let copia = self.copia_foto.clone().ok_or_else(|| anyhow!("sin textura para la foto"))?;
+            self.contexto.CopyResource(&copia, &self.ultimo);
+            let mut m = D3D11_MAPPED_SUBRESOURCE::default();
+            self.contexto.Map(&copia, 0, D3D11_MAP_READ, 0, Some(&mut m))?;
+            let (w, h) = (self.ancho_monitor as usize, self.alto_monitor as usize);
+            let mut bgra = Vec::with_capacity(w * h * 4);
+            for y in 0..h {
+                let fila = std::slice::from_raw_parts((m.pData as *const u8).add(y * m.RowPitch as usize), w * 4);
+                bgra.extend_from_slice(fila);
+            }
+            self.contexto.Unmap(&copia, 0);
+            Ok(super::foto::Imagen { ancho: self.ancho_monitor, alto: self.alto_monitor, bgra })
         }
     }
 

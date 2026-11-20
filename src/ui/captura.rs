@@ -46,12 +46,14 @@ pub fn desde_args(args: &[String]) -> Option<Pedido> {
 
 /// `KAIRO_PRUEBA_MARCO=x0,y0,x1,y1[,soltar]` (con `--captura-ui biblioteca`): un mouse de mentira, solo adentro
 /// de egui (el de Windows no se mueve), aprieta en (x0, y0), arrastra hasta (x1, y1) y, con `soltar`, suelta.
-/// Con `menu` en vez de `soltar`, solo hace clic derecho en (x0, y0). La captura espera a que termine.
+/// Con `menu` en vez de `soltar`, solo hace clic derecho en (x0, y0); con `clic`, un clic izquierdo ahí. La
+/// captura espera a que termine.
 pub struct PruebaMarco {
     desde: egui::Pos2,
     hasta: egui::Pos2,
     soltar: bool,
     menu: bool,
+    clic: bool,
     cuadro: u32,
 }
 
@@ -65,7 +67,7 @@ impl PruebaMarco {
         }
         let v: Vec<String> = std::env::var("KAIRO_PRUEBA_MARCO").ok()?.split(',').map(|s| s.trim().to_string()).collect();
         let n = |i: usize| v.get(i)?.parse::<f32>().ok();
-        Some(PruebaMarco { desde: egui::pos2(n(0)?, n(1)?), hasta: egui::pos2(n(2)?, n(3)?), soltar: v.get(4).is_some_and(|s| s == "soltar"), menu: v.get(4).is_some_and(|s| s == "menu"), cuadro: 0 })
+        Some(PruebaMarco { desde: egui::pos2(n(0)?, n(1)?), hasta: egui::pos2(n(2)?, n(3)?), soltar: v.get(4).is_some_and(|s| s == "soltar"), menu: v.get(4).is_some_and(|s| s == "menu"), clic: v.get(4).is_some_and(|s| s == "clic"), cuadro: 0 })
     }
 
     /// Suma los eventos del mouse de mentira para este cuadro.
@@ -73,8 +75,9 @@ impl PruebaMarco {
         self.cuadro += 1;
         let c = self.cuadro;
         let boton = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
-        if self.menu {
-            let derecho = |pressed| egui::Event::PointerButton { pos: self.desde, button: egui::PointerButton::Secondary, pressed, modifiers: Default::default() };
+        if self.menu || self.clic {
+            let cual = if self.menu { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
+            let derecho = |pressed| egui::Event::PointerButton { pos: self.desde, button: cual, pressed, modifiers: Default::default() };
             match c {
                 x if x == Self::EMPIEZA => raw.events.extend([egui::Event::PointerMoved(self.desde), derecho(true)]),
                 x if x == Self::EMPIEZA + 1 => raw.events.push(derecho(false)),

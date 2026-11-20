@@ -96,6 +96,13 @@ pub fn ejecutar(args: &[String]) -> Option<i32> {
     if let Some(k) = pos("--prueba-medios") {
         return Some(informar(prueba_medios(args.get(k + 1)?)));
     }
+    if let Some(k) = pos("--prueba-aviso") {
+        let mostrar = args.get(k + 2).map(|s| s.as_str()) == Some("mostrar");
+        return Some(informar(prueba_aviso(args.get(k + 1)?, mostrar)));
+    }
+    if let Some(k) = pos("--prueba-foto") {
+        return Some(informar(prueba_foto(args.get(k + 1)?)));
+    }
     if let Some(k) = pos("--prueba-discord") {
         let copiar = args.get(k + 2).map(|s| s.as_str()) != Some("sin-copiar");
         return Some(informar(prueba_discord(args.get(k + 1)?, copiar)));
@@ -665,7 +672,8 @@ fn guardar_png(ruta: &Path, w: u32, h: u32, rgba: &[u8]) -> Result<()> {
 fn prueba_discord(ruta: &str, copiar: bool) -> Result<()> {
     use crate::medios::discord;
     let ruta = Path::new(ruta);
-    let listo = match discord::listo(ruta) {
+    let carpeta = Config::cargar().carpeta;
+    let listo = match discord::listo(ruta, &carpeta) {
         Some(l) => {
             println!("ya estaba listo: {}", l.display());
             l
@@ -680,7 +688,7 @@ fn prueba_discord(ruta: &str, copiar: bool) -> Result<()> {
                     print!("{}% ", d * 10);
                 }
             };
-            let l = discord::preparar(ruta, &avance, &std::sync::atomic::AtomicBool::new(false))?;
+            let l = discord::preparar(ruta, &carpeta, &avance, &std::sync::atomic::AtomicBool::new(false))?;
             println!();
             println!("achicado en {:.1} s", inicio.elapsed().as_secs_f64());
             l
@@ -690,10 +698,107 @@ fn prueba_discord(ruta: &str, copiar: bool) -> Result<()> {
     let info = crate::medios::info(&listo)?;
     println!("{} · {:.2} MB · {}x{} · {:.1} s · {} pista(s) de audio", listo.display(), peso as f64 / 1e6, info.ancho, info.alto, info.duracion, info.pistas_audio);
     anyhow::ensure!(peso <= discord::MAXIMO, "pesa más de 20 MB");
-    anyhow::ensure!(discord::listo(ruta).as_deref() == Some(listo.as_path()), "listo() no encuentra la copia");
+    anyhow::ensure!(discord::listo(ruta, &carpeta).as_deref() == Some(listo.as_path()), "listo() no encuentra la copia");
     if copiar {
         crate::compartir::copiar(&[listo]).map_err(|e| anyhow::anyhow!(e))?;
         println!("copiado al portapapeles");
     }
     Ok(())
 }
+
+/// Dibuja los avisos (clip, foto y error; a escala 100 % y 150 %) sobre un fondo que imita un juego y los
+/// guarda en un PNG, para revisarlos sin capturar la pantalla. Con `mostrar`, además muestra uno de verdad
+/// (arriba a la derecha, unos segundos) y revisa que quede fuera de las capturas.
+fn prueba_aviso(ruta: &str, mostrar: bool) -> Result<()> {
+    use crate::aviso::{Dibujo, Tipo};
+    let casos = [
+        (Tipo::Clip, "Clip guardado", "Valorant · últimos 30 s"),
+        (Tipo::Foto, "Foto guardada", "Valorant"),
+        (Tipo::Error, "No se pudo guardar el clip", "todavía no hay nada grabado"),
+    ];
+    let mut dibujos = Vec::new();
+    for escala in [1.0f32, 1.5] {
+        for (tipo, titulo, detalle) in casos {
+            dibujos.push(unsafe { Dibujo::nuevo(tipo, titulo, detalle, escala)? });
+        }
+    }
+    let ancho = dibujos.iter().map(|d| d.ancho).max().unwrap_or(0) as usize + 40;
+    let alto = dibujos.iter().map(|d| d.alto as usize).sum::<usize>() + 40;
+    // Fondo: un degradé con colores de juego, para ver la sombra y la transparencia.
+    let mut rgb = vec![0u8; ancho * alto * 3];
+    for y in 0..alto {
+        for x in 0..ancho {
+            let i = (y * ancho + x) * 3;
+            rgb[i..i + 3].copy_from_slice(&[(60 + x * 120 / ancho) as u8, (90 + y * 80 / alto) as u8, (140 - x * 60 / ancho) as u8]);
+        }
+    }
+    let mut y0 = 20usize;
+    for d in &dibujos {
+        let p = d.pixeles();
+        for y in 0..d.alto as usize {
+            for x in 0..d.ancho as usize {
+                let s = (y * d.ancho as usize + x) * 4;
+                let a = p[s + 3] as u32;
+                let o = ((y0 + y) * ancho + 20 + x) * 3;
+                for (k, c) in [2usize, 1, 0].into_iter().enumerate() {
+                    // Premultiplicado: destino × (1 − a) + origen.
+                    rgb[o + k] = ((rgb[o + k] as u32 * (255 - a) / 255) + p[s + c] as u32).min(255) as u8;
+                }
+            }
+        }
+        y0 += d.alto as usize;
+    }
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(ruta)?), ancho as u32, alto as u32);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header()?.write_image_data(&rgb)?;
+    println!("dibujados {} avisos en {ruta}", dibujos.len());
+    drop(dibujos);
+
+    if mostrar {
+        use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE};
+        crate::aviso::mostrar(Tipo::Clip, "Clip guardado", "Prueba de Kairo · últimos 30 s");
+        println!("afinidad de la ventana: {:?} (17 = fuera de las capturas)", crate::aviso::afinidad());
+        let fin = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < fin {
+            let mut msg = MSG::default();
+            unsafe {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        println!("aviso mostrado y cerrado");
+    }
+    Ok(())
+}
+
+/// Arranca la grabadora con los ajustes de siempre, pide una foto y la guarda en `ruta`. Muestra el tamaño,
+/// cuánto tardó y el brillo promedio (una foto toda negra tiene 0). Graba la pantalla real: borrar después.
+fn prueba_foto(ruta: &str) -> Result<()> {
+    iniciar_mf()?;
+    let cfg = Config::cargar();
+    let g = Grabadora::iniciar(&cfg);
+    std::thread::sleep(Duration::from_secs(2));
+    let inicio = std::time::Instant::now();
+    let img = g.pedir_foto().recv_timeout(Duration::from_secs(3)).map_err(|_| anyhow!("la grabadora no respondió"))??;
+    let llego = inicio.elapsed();
+    let guardada = crate::grabadora::foto::guardar_en(Path::new(ruta), g.juego(), &img)?;
+    let total = inicio.elapsed();
+    g.detener();
+    let brillo = img.bgra.chunks_exact(4).map(|p| (p[0] as u64 + p[1] as u64 + p[2] as u64) / 3).sum::<u64>() / (img.bgra.len() as u64 / 4).max(1);
+    let peso = std::fs::metadata(&guardada)?.len();
+    println!(
+        "foto {}×{} · llegó en {} ms · guardada en {} ms · {:.1} MB · brillo promedio {brillo}",
+        img.ancho,
+        img.alto,
+        llego.as_millis(),
+        total.as_millis(),
+        peso as f64 / 1e6
+    );
+    anyhow::ensure!(brillo > 0, "la foto salió negra");
+    Ok(())
+}
+

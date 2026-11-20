@@ -34,6 +34,17 @@ fn una_linea(ui: &Ui, texto: &str, fuente: FontId, color: Color32, ancho: f32) -
     ui.fonts(|f| f.layout_job(job))
 }
 
+/// "se borra en 42 min" (las copias para Discord).
+fn se_borra_en(creada: std::time::SystemTime, minutos: u32) -> String {
+    let pasaron = std::time::SystemTime::now().duration_since(creada).map(|d| d.as_secs()).unwrap_or(0);
+    let quedan = (minutos as u64 * 60).saturating_sub(pasaron);
+    match quedan {
+        0..=59 => "se borra en un momento".into(),
+        60..=3599 => format!("se borra en {} min", quedan / 60),
+        _ => format!("se borra en {} h", quedan.div_ceil(3600)),
+    }
+}
+
 fn alternar_seleccion(seleccion: &mut std::collections::HashSet<std::path::PathBuf>, ruta: &std::path::Path) {
     if !seleccion.remove(ruta) {
         seleccion.insert(ruta.to_path_buf());
@@ -46,12 +57,24 @@ pub(super) fn mostrar_en_carpeta(ruta: &std::path::Path) {
 
 impl App {
     pub(super) fn pagina_biblioteca(&mut self, ui: &mut Ui) {
-        let total = self.biblioteca.clips.len();
-        let peso: u64 = self.biblioteca.clips.iter().map(|c| c.tamano).sum();
+        self.biblioteca.discord_minutos = self.guardada.discord_minutos;
+        let propios: Vec<&Clip> = self.biblioteca.clips.iter().filter(|c| !c.para_discord).collect();
+        let total = propios.len();
+        let peso: u64 = propios.iter().map(|c| c.tamano).sum();
+        let fotos = propios.iter().filter(|c| c.foto).count();
+        let copias_discord = self.biblioteca.clips.len() - total;
+        let clips = total - fotos;
         let sub = if total == 0 {
             "Tus clips aparecen acá.".to_string()
         } else {
-            format!("{total} clip{} · {}", if total == 1 { "" } else { "s" }, texto_bytes(peso))
+            let mut partes = Vec::new();
+            if clips > 0 || fotos == 0 {
+                partes.push(format!("{clips} clip{}", if clips == 1 { "" } else { "s" }));
+            }
+            if fotos > 0 {
+                partes.push(format!("{fotos} foto{}", if fotos == 1 { "" } else { "s" }));
+            }
+            format!("{} · {}", partes.join(" y "), texto_bytes(peso))
         };
         encabezado(ui, "Biblioteca", &sub);
 
@@ -154,23 +177,40 @@ impl App {
         // Favoritos y juegos (como chips).
         let juegos = self.biblioteca.juegos();
         let favoritos = self.biblioteca.favoritos();
-        if !juegos.is_empty() || favoritos > 0 {
+        if copias_discord == 0 {
+            self.biblioteca.solo_discord = false;
+        }
+        if !juegos.is_empty() || favoritos > 0 || copias_discord > 0 {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                let todos = self.biblioteca.filtro_juego.is_none() && !self.biblioteca.solo_favoritos;
+                let b = &mut self.biblioteca;
+                let todos = b.filtro_juego.is_none() && !b.solo_favoritos && !b.solo_discord;
                 if chip(ui, &format!("Todos  {total}"), todos).clicked() {
-                    self.biblioteca.filtro_juego = None;
-                    self.biblioteca.solo_favoritos = false;
+                    b.filtro_juego = None;
+                    b.solo_favoritos = false;
+                    b.solo_discord = false;
                 }
-                if favoritos > 0 || self.biblioteca.solo_favoritos {
-                    if chip(ui, &format!("Favoritos  {favoritos}"), self.biblioteca.solo_favoritos).clicked() {
-                        self.biblioteca.solo_favoritos = !self.biblioteca.solo_favoritos;
+                if favoritos > 0 || b.solo_favoritos {
+                    if chip(ui, &format!("Favoritos  {favoritos}"), b.solo_favoritos).clicked() {
+                        b.solo_favoritos = !b.solo_favoritos;
+                        b.solo_discord = false;
+                    }
+                }
+                // Las copias livianas que se hicieron para Discord (se borran solas).
+                if copias_discord > 0 {
+                    let r = chip(ui, &format!("Para Discord  {copias_discord}"), b.solo_discord)
+                        .on_hover_text("Copias livianas para mandar por Discord: se borran solas (Guardado → Copias para Discord)");
+                    if r.clicked() {
+                        b.solo_discord = !b.solo_discord;
+                        b.filtro_juego = None;
+                        b.solo_favoritos = false;
                     }
                 }
                 for (j, n) in &juegos {
-                    let sel = self.biblioteca.filtro_juego.as_deref() == Some(j.as_str());
+                    let sel = b.filtro_juego.as_deref() == Some(j.as_str());
                     if chip(ui, &format!("{j}  {n}"), sel).clicked() {
-                        self.biblioteca.filtro_juego = if sel { None } else { Some(j.clone()) };
+                        b.filtro_juego = if sel { None } else { Some(j.clone()) };
+                        b.solo_discord = false;
                     }
                 }
             });
@@ -295,7 +335,9 @@ impl App {
             // Un velo y el botón de reproducir, que aparecen de a poco.
             p.rect_filled(imagen, redondeo, Color32::from_black_alpha((60.0 * h) as u8));
             p.circle_filled(imagen.center(), 22.0, ACENTO.gamma_multiply(0.9 * h));
-            p.text(imagen.center() + vec2(1.5, 0.0), Align2::CENTER_CENTER, icono::REPRODUCIR, FontId::new(16.0, iconos()), Color32::WHITE.gamma_multiply(h));
+            // (En una foto, el ícono de la cámara: se abre con el visor de fotos de Windows.)
+            let (icono, corrido) = if clip.foto { (icono::FOTO, 0.0) } else { (icono::REPRODUCIR, 1.5) };
+            p.text(imagen.center() + vec2(corrido, 0.0), Align2::CENTER_CENTER, icono, FontId::new(16.0, iconos()), Color32::WHITE.gamma_multiply(h));
         }
         // Círculo para seleccionar, arriba a la derecha: al pasar el mouse, o siempre si ya se está seleccionando.
         let caja_sel = Rect::from_min_size(pos2(imagen.right() - 36.0, imagen.top() + 8.0), vec2(28.0, 28.0));
@@ -325,9 +367,10 @@ impl App {
         if resp_estrella.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(ayuda).clicked() {
             self.biblioteca.alternar_favorito(&clip.ruta);
         }
-        // Duración, abajo a la derecha de la miniatura.
-        if let Some(d) = clip.duracion {
-            let g = una_linea(ui, &texto_duracion(d), FontId::new(12.0, semibold()), Color32::WHITE, 100.0);
+        // Duración (o "Foto"), abajo a la derecha de la miniatura.
+        let etiqueta = if clip.foto { Some("Foto".to_string()) } else { clip.duracion.map(texto_duracion) };
+        if let Some(texto) = etiqueta {
+            let g = una_linea(ui, &texto, FontId::new(12.0, semibold()), Color32::WHITE, 100.0);
             let caja = Rect::from_min_size(
                 pos2(imagen.right() - g.size().x - 18.0, imagen.bottom() - g.size().y - 14.0),
                 vec2(g.size().x + 12.0, g.size().y + 6.0),
@@ -345,22 +388,32 @@ impl App {
             datos.push(j.clone());
         }
         datos.push(texto_bytes(clip.tamano));
-        datos.push(hace_cuanto(clip.modificado));
+        datos.push(if clip.para_discord { se_borra_en(clip.modificado, self.guardada.discord_minutos) } else { hace_cuanto(clip.modificado) });
         let meta = una_linea(ui, &datos.join(" · "), FontId::proportional(12.0), SECUNDARIO, ancho_texto);
         p.galley(pos2(x, imagen.bottom() + 32.0), meta, SECUNDARIO);
 
         let resp = resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(if modo_seleccion {
             "Clic para seleccionar o sacar de la selección · arrastra para seleccionar varios"
         } else {
-            "Clic para verlo · arrastra para seleccionar varios · clic derecho para más opciones"
+            if clip.foto {
+                "Clic para abrirla · arrastra para seleccionar varios · clic derecho para más opciones"
+            } else {
+                "Clic para verlo · arrastra para seleccionar varios · clic derecho para más opciones"
+            }
         });
         if resp.clicked() {
             // Seleccionando (o con Ctrl), el clic suma o saca de la selección; si no, abre el clip.
             if modo_seleccion || ui.input(|i| i.modifiers.ctrl) {
                 alternar_seleccion(&mut self.biblioteca.seleccion, &clip.ruta);
+            } else if clip.foto {
+                crate::abrir::archivo(&clip.ruta);
             } else {
                 self.abrir_visor(ui.ctx(), &clip.ruta, Modo::Ver);
             }
+        }
+        if clip.foto {
+            self.menu_foto(&resp, clip);
+            return salida;
         }
         resp.context_menu(|ui| {
             let logo = super::logos::discord(ui.ctx());
@@ -453,10 +506,44 @@ impl App {
         ui.ctx().request_repaint();
     }
 
+    /// El menú de una foto: abrirla, copiarla y lo de siempre.
+    fn menu_foto(&mut self, resp: &egui::Response, clip: &Clip) {
+        resp.context_menu(|ui| {
+            let logo = super::logos::discord(ui.ctx());
+            if item_menu(ui, &logo, false, "Abrir").clicked() {
+                crate::abrir::archivo(&clip.ruta);
+                ui.close_menu();
+            }
+            if item_menu(ui, &logo, true, "Copiar para Discord").clicked() {
+                self.copiar_para_discord(ui.ctx(), &clip.ruta);
+                ui.close_menu();
+            }
+            if item_menu(ui, &logo, false, if clip.favorito { "Quitar de favoritos" } else { "Marcar como favorito" }).clicked() {
+                self.biblioteca.alternar_favorito(&clip.ruta);
+                ui.close_menu();
+            }
+            ui.separator();
+            if item_menu(ui, &logo, false, "Mostrar en la carpeta").clicked() {
+                mostrar_en_carpeta(&clip.ruta);
+                ui.close_menu();
+            }
+            if item_menu(ui, &logo, false, "Renombrar…").clicked() {
+                self.biblioteca.renombrando = Some((clip.ruta.clone(), clip.nombre.clone()));
+                ui.close_menu();
+            }
+            ui.separator();
+            if item_menu(ui, &logo, false, "Mandar a la Papelera…").clicked() {
+                self.biblioteca.borrando = Some(clip.ruta.clone());
+                ui.close_menu();
+            }
+        });
+    }
+
     /// Copia el clip al portapapeles para pegarlo en Discord. Si pesa más de 20 MB, primero se achica una
-    /// copia y, cuando está, se copia sola.
+    /// copia y, cuando está, se copia sola. (Las fotos se copian tal cual.)
     fn copiar_para_discord(&mut self, ctx: &egui::Context, ruta: &std::path::Path) {
-        if let Some(listo) = crate::medios::discord::listo(ruta) {
+        let foto = ruta.extension().is_some_and(|x| x.eq_ignore_ascii_case("png"));
+        if let Some(listo) = if foto { Some(ruta.to_path_buf()) } else { crate::medios::discord::listo(ruta, &self.guardada.carpeta) } {
             match crate::compartir::copiar(&[listo]) {
                 Ok(()) => self.avisar("Copiado: pégalo en Discord (o en una carpeta) con Ctrl+V.", false),
                 Err(e) => self.avisar(e, true),
@@ -476,12 +563,18 @@ impl App {
     /// Si terminó la copia para Discord, va al portapapeles y se avisa (en cualquier página).
     pub(super) fn revisar_discord(&mut self) {
         let Some((_, r)) = self.biblioteca.discord_terminado() else { return };
+        // La copia nueva aparece en "Para Discord".
+        self.biblioteca.escanear_ya();
         match r {
             None => self.avisar("Se canceló la copia para Discord.", false),
             Some(Ok(copia)) => {
                 let peso = std::fs::metadata(&copia).map(|m| m.len()).unwrap_or(0);
                 match crate::compartir::copiar(&[copia]) {
-                    Ok(()) => self.avisar_por(format!("Listo para Discord ({}): pégalo en el chat con Ctrl+V.", texto_bytes(peso)), false, 8.0),
+                    Ok(()) => {
+                        let dura = crate::config::texto_duracion(self.guardada.discord_minutos * 60);
+                        let texto = format!("Listo para Discord ({}): pégalo en el chat con Ctrl+V. La copia se borra sola en {dura}.", texto_bytes(peso));
+                        self.avisar_por(texto, false, 8.0)
+                    }
                     Err(e) => self.avisar(e, true),
                 }
             }

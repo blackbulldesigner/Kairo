@@ -9,6 +9,7 @@ mod buffer;
 mod captura;
 mod codificador;
 mod encoder;
+pub mod foto;
 pub mod h264;
 pub mod juego;
 mod mouse;
@@ -19,6 +20,7 @@ pub mod sonido;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -50,7 +52,12 @@ pub struct Grabadora {
     hilos: Vec<JoinHandle<()>>,
     buffer: Arc<Mutex<Buffer>>,
     pub info: Arc<Mutex<Info>>,
+    /// Una foto pedida: el hilo de video manda el próximo cuadro por acá.
+    foto: PedidoFoto,
 }
+
+/// Dónde mandar la próxima foto (la pide la bandeja con el atajo; la atiende el hilo de video).
+type PedidoFoto = Arc<Mutex<Option<Sender<Result<foto::Imagen>>>>>;
 
 /// Lo necesario para guardar un clip desde otro hilo.
 #[derive(Clone)]
@@ -66,17 +73,32 @@ impl Grabadora {
         let info = Arc::new(Mutex::new(Info::default()));
         // pid del juego detectado (0 = ninguno): lo escribe el hilo de video y lo lee el de audio.
         let pid_juego = Arc::new(AtomicU32::new(0));
+        let foto: PedidoFoto = Arc::new(Mutex::new(None));
         let mut hilos = Vec::new();
         {
-            let (cfg, detener, buffer, info, pid) = (cfg.clone(), detener.clone(), buffer.clone(), info.clone(), pid_juego.clone());
-            hilos.push(std::thread::spawn(move || con_com(|| hilo_video(&cfg, &detener, &buffer, &info, &pid))));
+            let (cfg, detener, buffer, info, pid, foto) = (cfg.clone(), detener.clone(), buffer.clone(), info.clone(), pid_juego.clone(), foto.clone());
+            hilos.push(std::thread::spawn(move || con_com(|| hilo_video(&cfg, &detener, &buffer, &info, &pid, &foto))));
         }
         let programas = cfg.otros_sonidos == OtrosSonidos::Elegidos && cfg.programas_audio.iter().any(|p| p.activa);
         if cfg.audio_juego.activa || cfg.audio_sistema.activa || cfg.audio_mic.activa || programas {
             let (cfg, detener, buffer, pid) = (cfg.clone(), detener.clone(), buffer.clone(), pid_juego.clone());
             hilos.push(std::thread::spawn(move || con_com(|| hilo_audio(&cfg, &detener, &buffer, &pid))));
         }
-        Grabadora { detener, hilos, buffer, info }
+        Grabadora { detener, hilos, buffer, info, foto }
+    }
+
+    /// El juego que se está grabando (para el aviso y las fotos).
+    pub fn juego(&self) -> Option<String> {
+        self.info.lock().ok().and_then(|i| i.juego.clone())
+    }
+
+    /// Pide una foto de lo que se está grabando: llega por el canal en el próximo cuadro (o un error).
+    pub fn pedir_foto(&self) -> Receiver<Result<foto::Imagen>> {
+        let (tx, rx) = mpsc::channel();
+        if let Ok(mut f) = self.foto.lock() {
+            *f = Some(tx);
+        }
+        rx
     }
 
     pub fn guardador(&self) -> Guardador {
@@ -101,15 +123,8 @@ impl Guardador {
     /// la suya (Clips\Fortnite) y lo que no es de un juego en Clips\Escritorio. El nombre lleva el juego y
     /// la fecha: "Fortnite 2026-11-18 21-30-05.mp4". Devuelve la ruta del MP4.
     pub fn guardar(&self, cfg: &Config, segundos: u32) -> Result<PathBuf> {
-        let juego = self.info.lock().ok().and_then(|i| i.juego.clone()).map(|j| nombre_para_carpeta(&j));
-        let fecha = crate::registro::fecha_para_archivo();
-        let (carpeta, nombre) = match &juego {
-            Some(j) if cfg.carpeta_por_juego => (cfg.carpeta.join(j), format!("{j} {fecha}.mp4")),
-            Some(j) => (cfg.carpeta.clone(), format!("{j} {fecha}.mp4")),
-            None if cfg.carpeta_por_juego => (cfg.carpeta.join(CARPETA_SIN_JUEGO), format!("{CARPETA_SIN_JUEGO} {fecha}.mp4")),
-            None => (cfg.carpeta.clone(), format!("Kairo {fecha}.mp4")),
-        };
-        self.guardar_en(cfg, &carpeta.join(nombre), segundos)
+        let juego = self.info.lock().ok().and_then(|i| i.juego.clone());
+        self.guardar_en(cfg, &ruta_nueva(cfg, juego.as_deref(), "mp4"), segundos)
     }
 
     pub fn guardar_en(&self, cfg: &Config, ruta: &std::path::Path, segundos: u32) -> Result<PathBuf> {
@@ -160,6 +175,33 @@ impl Guardador {
     }
 }
 
+/// Dónde va un clip o una foto nueva: con "Una carpeta por juego", en la del juego (Clips\Fortnite) y lo que no
+/// es de un juego en Clips\Escritorio. El nombre lleva el juego y la fecha ("Fortnite 2026-11-18 21-30-05.mp4");
+/// si ya hay uno con ese nombre (dos fotos en el mismo segundo), se le suma un número.
+pub fn ruta_nueva(cfg: &Config, juego: Option<&str>, extension: &str) -> PathBuf {
+    let juego = juego.map(nombre_para_carpeta);
+    let fecha = crate::registro::fecha_para_archivo();
+    let (carpeta, base) = match &juego {
+        Some(j) if cfg.carpeta_por_juego => (cfg.carpeta.join(j), format!("{j} {fecha}")),
+        Some(j) => (cfg.carpeta.clone(), format!("{j} {fecha}")),
+        None if cfg.carpeta_por_juego => (cfg.carpeta.join(CARPETA_SIN_JUEGO), format!("{CARPETA_SIN_JUEGO} {fecha}")),
+        None => (cfg.carpeta.clone(), format!("Kairo {fecha}")),
+    };
+    let mut ruta = carpeta.join(format!("{base}.{extension}"));
+    for n in 2.. {
+        if !ruta.exists() {
+            break;
+        }
+        ruta = carpeta.join(format!("{base} ({n}).{extension}"));
+    }
+    ruta
+}
+
+/// Si hay una foto pedida, devuelve a quién mandársela (y la saca del pedido).
+fn foto_pedida(foto: &PedidoFoto) -> Option<Sender<Result<foto::Imagen>>> {
+    foto.lock().ok().and_then(|mut f| f.take())
+}
+
 fn con_com(f: impl FnOnce()) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED).ok();
@@ -174,14 +216,14 @@ fn poner_info(info: &Mutex<Info>, f: impl FnOnce(&mut Info)) {
     }
 }
 
-fn hilo_video(cfg: &Config, detener: &AtomicBool, buffer: &Mutex<Buffer>, info: &Mutex<Info>, pid_juego: &AtomicU32) {
+fn hilo_video(cfg: &Config, detener: &AtomicBool, buffer: &Mutex<Buffer>, info: &Mutex<Info>, pid_juego: &AtomicU32, foto: &PedidoFoto) {
     // El detector vive fuera de cada sesión: si la captura se reinicia, el juego sigue detectado.
     // El juego elegido a mano solo cuenta en "Solo el juego"; en el resto, se detecta solo.
     let elegido = (cfg.modo == ModoCaptura::Juego).then(|| cfg.juego_elegido.as_ref().map(|j| j.exe.clone())).flatten();
     let mut detector = juego::Detector::new(elegido);
     let mut error_anterior = String::new();
     while !detener.load(Ordering::SeqCst) {
-        match sesion_video(cfg, detener, buffer, info, &mut detector, pid_juego) {
+        match sesion_video(cfg, detener, buffer, info, &mut detector, pid_juego, foto) {
             Ok(()) => break,
             Err(e) => {
                 let texto = format!("{e:#}");
@@ -248,6 +290,7 @@ fn sesion_video(
     info: &Mutex<Info>,
     detector: &mut juego::Detector,
     pid_juego: &AtomicU32,
+    foto: &PedidoFoto,
 ) -> Result<()> {
     detector.revisar();
     let deseado = monitor_deseado(cfg_pedida, detector);
@@ -352,10 +395,19 @@ fn sesion_video(
         // "Solo el juego": si el juego no está adelante (Alt+Tab, minimizado, todavía no hay juego),
         // el cuadro va en negro y no se captura nada.
         if solo_juego && !detector.al_frente() {
+            if let Some(tx) = foto_pedida(foto) {
+                let _ = tx.send(Err(anyhow!("el juego no está a la vista (con «Solo el juego», la foto es del juego)")));
+            }
             enc.atender(&mut paquetes)?;
             cola.push_back((cap.negro()?, objetivo));
         } else {
             cap.capturar()?;
+            // Una foto pedida: el cuadro que se acaba de capturar (lo mismo que se graba, sin el mouse).
+            if cap.hay_cuadro() {
+                if let Some(tx) = foto_pedida(foto) {
+                    let _ = tx.send(cap.foto());
+                }
+            }
             enc.atender(&mut paquetes)?;
             if cap.hay_cuadro() {
                 cola.push_back((cap.convertir()?, objetivo));

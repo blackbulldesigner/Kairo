@@ -29,6 +29,10 @@ pub struct Clip {
     pub duracion: Option<f64>,
     /// Con estrella: la limpieza automática no lo borra.
     pub favorito: bool,
+    /// Una foto (PNG del atajo "Sacar foto") en vez de un clip.
+    pub foto: bool,
+    /// Una copia para Discord (en "Para Discord"): se borra sola y solo se ve en esa categoría.
+    pub para_discord: bool,
     /// Clip de Kairo de antes de la 0.7.2 con pistas separadas: hay que marcar la mezcla (ver `pistas_mp4`).
     reparar: bool,
 }
@@ -61,6 +65,10 @@ pub struct Biblioteca {
     recibir: Receiver<Resultado>,
     pub filtro_juego: Option<String>,
     pub solo_favoritos: bool,
+    /// Mostrar solo las copias para Discord.
+    pub solo_discord: bool,
+    /// Cada cuántos minutos se borran las copias para Discord (lo de Guardado).
+    pub discord_minutos: u32,
     pub busqueda: String,
     pub orden: Orden,
     /// Clip que se está renombrando (con el nombre nuevo) o por mandar a la Papelera.
@@ -109,8 +117,8 @@ impl Biblioteca {
         let (enviar, recibir) = mpsc::channel::<Resultado>();
         let ctx = ctx.clone();
         std::thread::spawn(move || hilo_miniaturas(pedidos, enviar, ctx));
-        // Las copias para Discord de otros días ya no hacen falta.
-        std::thread::spawn(crate::medios::discord::limpiar_viejas);
+        // Las copias para Discord iban antes en la carpeta temporal: ya no hacen falta.
+        std::thread::spawn(|| std::fs::remove_dir_all(std::env::temp_dir().join("Kairo Discord")));
         Self {
             clips: Vec::new(),
             carpeta: PathBuf::new(),
@@ -120,6 +128,8 @@ impl Biblioteca {
             recibir,
             filtro_juego: None,
             solo_favoritos: false,
+            solo_discord: false,
+            discord_minutos: 60,
             busqueda: String::new(),
             orden: Orden::Nuevos,
             renombrando: None,
@@ -159,6 +169,8 @@ impl Biblioteca {
     }
 
     fn escanear(&mut self) {
+        // Las copias para Discord vencidas se van antes de mirar.
+        crate::limpieza::borrar_copias_discord(&self.carpeta, self.discord_minutos);
         let mut clips = Vec::new();
         buscar_clips(&self.carpeta, &self.carpeta, 0, &mut clips);
         // Lo que ya se sabía (duración por el video) se conserva entre escaneos.
@@ -205,7 +217,7 @@ impl Biblioteca {
     /// Juegos con clips, de más clips a menos: (juego, cantidad).
     pub fn juegos(&self) -> Vec<(String, usize)> {
         let mut cuenta: HashMap<&str, usize> = HashMap::new();
-        for c in &self.clips {
+        for c in self.clips.iter().filter(|c| !c.para_discord) {
             if let Some(j) = &c.juego {
                 *cuenta.entry(j.as_str()).or_default() += 1;
             }
@@ -221,6 +233,8 @@ impl Biblioteca {
         let mut v: Vec<Clip> = self
             .clips
             .iter()
+            // Las copias para Discord solo se ven en su categoría.
+            .filter(|c| c.para_discord == self.solo_discord)
             .filter(|c| self.filtro_juego.is_none() || c.juego == self.filtro_juego)
             .filter(|c| !self.solo_favoritos || c.favorito)
             .filter(|c| {
@@ -241,7 +255,8 @@ impl Biblioteca {
     /// Cambia el nombre del clip (y de sus datos). Devuelve un error dicho para la persona.
     pub fn renombrar(&mut self, ruta: &Path, nuevo: &str) -> Result<(), String> {
         let nuevo = crate::grabadora::nombre_para_carpeta(nuevo.trim());
-        let destino = ruta.with_file_name(format!("{nuevo}.mp4"));
+        let extension = ruta.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "mp4".into());
+        let destino = ruta.with_file_name(format!("{nuevo}.{extension}"));
         if destino == ruta {
             return Ok(());
         }
@@ -255,7 +270,7 @@ impl Biblioteca {
     }
 
     pub fn favoritos(&self) -> usize {
-        self.clips.iter().filter(|c| c.favorito).count()
+        self.clips.iter().filter(|c| c.favorito && !c.para_discord).count()
     }
 
     /// Pone o saca la estrella (en los datos del clip; si no tiene, se crean).
@@ -281,6 +296,7 @@ impl Biblioteca {
             resultado: Arc::new(Mutex::new(None)),
         };
         let (clip, progreso, cancelar, resultado, ctx) = (d.clip.clone(), d.progreso.clone(), d.cancelar.clone(), d.resultado.clone(), ctx.clone());
+        let carpeta = self.carpeta.clone();
         std::thread::spawn(move || {
             let avance = |f: f32| {
                 if let Ok(mut p) = progreso.lock() {
@@ -288,7 +304,7 @@ impl Biblioteca {
                 }
                 ctx.request_repaint();
             };
-            let r = crate::medios::discord::preparar(&clip, &avance, &cancelar).map_err(|e| format!("{e:#}"));
+            let r = crate::medios::discord::preparar(&clip, &carpeta, &avance, &cancelar).map_err(|e| format!("{e:#}"));
             if let Ok(mut x) = resultado.lock() {
                 *x = Some(r);
             }
@@ -334,7 +350,7 @@ impl Biblioteca {
     }
 }
 
-/// Busca MP4 en la carpeta y en sus subcarpetas (las de cada juego), hasta 2 niveles.
+/// Busca clips (MP4) y fotos (PNG) en la carpeta y en sus subcarpetas (las de cada juego), hasta 2 niveles.
 fn buscar_clips(raiz: &Path, dir: &Path, nivel: u32, salida: &mut Vec<Clip>) {
     let Ok(entradas) = std::fs::read_dir(dir) else { return };
     for e in entradas.flatten() {
@@ -346,7 +362,9 @@ fn buscar_clips(raiz: &Path, dir: &Path, nivel: u32, salida: &mut Vec<Clip>) {
             }
             continue;
         }
-        if !ruta.extension().is_some_and(|x| x.eq_ignore_ascii_case("mp4")) {
+        let es = |e: &str| ruta.extension().is_some_and(|x| x.eq_ignore_ascii_case(e));
+        let foto = es("png");
+        if !es("mp4") && !foto {
             continue;
         }
         let datos = datos_clip::leer(&ruta);
@@ -363,6 +381,8 @@ fn buscar_clips(raiz: &Path, dir: &Path, nivel: u32, salida: &mut Vec<Clip>) {
             reparar: datos.as_ref().is_some_and(|d| d.pistas.len() > 1 && !d.mezcla_marcada),
             favorito: datos.as_ref().is_some_and(|d| d.favorito),
             duracion: datos.map(|d| d.duracion).filter(|d| *d > 0.0),
+            foto,
+            para_discord: nivel == 1 && dir.file_name().is_some_and(|n| n == crate::limpieza::CARPETA_DISCORD),
             ruta,
         });
     }
@@ -467,8 +487,34 @@ fn hilo_miniaturas(pedidos: Receiver<PathBuf>, enviar: Sender<Resultado>, ctx: e
     }
 }
 
+/// La miniatura de una foto: el PNG achicado (sin duración).
+fn generar_foto(ruta: &Path) -> Option<(ColorImage, f64)> {
+    let mut decodificador = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(ruta).ok()?));
+    decodificador.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut lector = decodificador.read_info().ok()?;
+    let mut buf = vec![0u8; lector.output_buffer_size()];
+    let info = lector.next_frame(&mut buf).ok()?;
+    let canales = match info.color_type {
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        _ => return None,
+    };
+    let (w, h) = (info.width as usize, info.height as usize);
+    let mut bgra = Vec::with_capacity(w * h * 4);
+    for p in buf[..info.buffer_size()].chunks_exact(canales) {
+        let (r, g, b) = if canales < 3 { (p[0], p[0], p[0]) } else { (p[0], p[1], p[2]) };
+        bgra.extend_from_slice(&[b, g, r, 255]);
+    }
+    achicar(&bgra, w, h).map(|i| (i, 0.0))
+}
+
 /// Decodifica un cuadro del clip (a un tercio, como mucho a 2 s) y lo achica a la miniatura.
 fn generar(ruta: &Path) -> Option<(ColorImage, f64)> {
+    if ruta.extension().is_some_and(|x| x.eq_ignore_ascii_case("png")) {
+        return generar_foto(ruta);
+    }
     use windows::core::{HSTRING, PROPVARIANT};
     use windows::Win32::Media::MediaFoundation::*;
     unsafe {

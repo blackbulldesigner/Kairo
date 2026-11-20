@@ -28,9 +28,16 @@ PCs de escritorio.
   achicas para compartir (también "Para Discord": menos de 20 MB). Siempre se guarda como clip nuevo.
 - **A Discord:** clic derecho en el clip → **Copiar para Discord** y pégalo en el chat con Ctrl+V. Si pesa más de
   20 MB (lo que deja subir Discord sin Nitro), Kairo primero achica una copia (sin tocar el clip) y la deja copiada.
+  Las copias quedan en la categoría **Para Discord** de la Biblioteca y se borran solas (Guardado → Copias para
+  Discord: 15 min, 1 hora o 1 día).
+- **Fotos:** con el atajo **Sacar foto** (en Atajos) guardas una foto de lo que se está grabando (PNG); aparece en la
+  Biblioteca con los clips y se abre con el visor de fotos de Windows.
 - **Varios a la vez:** arrastra con el mouse para dibujar un recuadro, como en el escritorio (con Ctrl se suma a lo
   que ya elegiste), o usa Ctrl+clic o el círculo de cada tarjeta. La barra de arriba los manda juntos a la Papelera.
-- **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto.
+- **F9** guarda los últimos segundos como MP4 (por defecto en `Videos\Kairo`). Suena un aviso corto y aparece un
+  cartelito arriba a la derecha por 2 segundos, que no sale en los clips (Guardado → Aviso en pantalla; apagado,
+  queda solo el sonido).
+- En una laptop desenchufada, Kairo graba a 720p, 30 FPS y calidad Ligera (Grabación → Ahorro con batería).
 - Con un segundo atajo ("Guardar clip largo", en Atajos) guardas un clip más largo (por ejemplo, 2 min) por si la
   jugada empezó antes. La RAM la marca el más largo de los dos; con el interruptor **Clip largo** apagado no usa
   RAM de más.

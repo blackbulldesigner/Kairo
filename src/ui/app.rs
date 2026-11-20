@@ -213,7 +213,7 @@ impl App {
             Some(e) if e.pausado => (AMARILLO, "En pausa".into(), "Reanúdala desde el ícono de la bandeja.".into()),
             Some(e) if e.grabando => {
                 let seg = crate::config::texto_duracion(self.guardada.segundos);
-                let ahorro = if e.ahorro { "\nAhorro con batería: 720p, Ligera" } else { "" };
+                let ahorro = if e.ahorro { "\nAhorro con batería: 720p, 30 FPS, Ligera" } else { "" };
                 let juego = e.juego.as_ref().map(|j| format!("\nJuego: {j}")).unwrap_or_default();
                 let texto = match &atajo {
                     Some(a) => format!("Grabando · {a}"),

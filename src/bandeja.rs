@@ -16,7 +16,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotK
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::config::{Calidad, Config, CualAtajo, Resolucion};
+use crate::aviso;
+use crate::config::{texto_duracion, Calidad, Config, CualAtajo, Resolucion};
 use crate::estado::{self, Estado};
 use crate::grabadora::{sonido, Grabadora};
 use crate::registro::log;
@@ -32,6 +33,8 @@ pub const WM_SUSPENDER_ATAJOS: u32 = WM_APP + 3;
 const WM_CLIP_LISTO: u32 = WM_APP + 4;
 /// El hilo de actualizaciones encontró una versión nueva (de la que todavía no se avisó).
 const WM_ACTUALIZACION: u32 = WM_APP + 5;
+/// Terminó de guardarse una foto.
+const WM_FOTO_LISTA: u32 = WM_APP + 6;
 /// Clic en el globo de aviso (llega en el lparam de WM_BANDEJA).
 const NIN_BALLOONUSERCLICK: u32 = WM_USER + 5;
 
@@ -42,6 +45,7 @@ const ID_AJUSTES: usize = 4;
 const ID_SALIR: usize = 5;
 const ID_ACTUALIZAR: usize = 6;
 const ID_GUARDAR_LARGO: usize = 7;
+const ID_FOTO: usize = 8;
 const TEMPORIZADOR: usize = 1;
 
 static MSG_BARRA_DE_TAREAS: AtomicU32 = AtomicU32::new(0);
@@ -55,6 +59,11 @@ struct Bandeja {
     error_atajos: Option<String>,
     guardando: Arc<AtomicBool>,
     resultado_clip: Arc<Mutex<Option<Result<String, String>>>>,
+    /// Segundos que faltan para revisar las copias para Discord vencidas.
+    revisar_copias_en: u32,
+    /// El último guardado fue el del clip largo (para el aviso).
+    ultimo_largo: bool,
+    resultado_foto: Arc<Mutex<Option<Result<(String, Option<String>), String>>>>,
     ultimo_clip: Option<String>,
     icono: HICON,
     icono_gris: HICON,
@@ -114,10 +123,24 @@ unsafe fn crear_icono(n: usize, color: [u8; 3]) -> HICON {
 }
 
 /// ¿Cambió algo que obligue a reiniciar la grabación? (Volumen, carpeta o atajos no.)
+/// Lo que se graba con la laptop desenchufada: 720p, 30 FPS y calidad Ligera (menos trabajo para la tarjeta y
+/// más batería). Las opciones avanzadas (por ejemplo, un bitrate alto) no cuentan mientras dure.
+fn con_ahorro(cfg: &Config) -> Config {
+    let mut c = cfg.clone();
+    c.resolucion = Resolucion::P720;
+    c.fps = 30;
+    c.calidad = Calidad::Ligera;
+    c.avanzado.activo = false;
+    c
+}
+
 fn cambia_la_grabacion(a: &Config, b: &Config) -> bool {
     let mut x = a.clone();
     x.carpeta = b.carpeta.clone();
     x.sonido_al_guardar = b.sonido_al_guardar;
+    x.aviso_al_guardar = b.aviso_al_guardar;
+    x.discord_minutos = b.discord_minutos;
+    x.atajo_foto = b.atajo_foto.clone();
     x.carpeta_por_juego = b.carpeta_por_juego;
     x.pistas_separadas = b.pistas_separadas;
     x.atajo_guardar = b.atajo_guardar.clone();
@@ -141,16 +164,13 @@ impl Bandeja {
         self.cfg.ahorro_bateria && self.en_bateria
     }
 
-    /// Lo que se graba de verdad: con el ahorro activo, 720p y calidad Ligera.
+    /// Lo que se graba de verdad (con el ahorro con batería, menos).
     fn cfg_grabacion(&self) -> Config {
-        let mut c = self.cfg.clone();
         if self.ahorrando() {
-            c.resolucion = Resolucion::P720;
-            c.calidad = Calidad::Ligera;
-            // Las opciones avanzadas (por ejemplo, un bitrate alto) no cuentan mientras dure el ahorro.
-            c.avanzado.activo = false;
+            con_ahorro(&self.cfg)
+        } else {
+            self.cfg.clone()
         }
-        c
     }
 
     fn grabando(&self) -> bool {
@@ -286,7 +306,7 @@ impl Bandeja {
         self.en_bateria = ahora;
         log(if ahora { "laptop desenchufada" } else { "laptop enchufada" });
         if cambia_la_grabacion(&antes, &self.cfg_grabacion()) {
-            log(if self.ahorrando() { "ahorro con batería: 720p, calidad Ligera" } else { "fin del ahorro con batería" });
+            log(if self.ahorrando() { "ahorro con batería: 720p, 30 fps, calidad Ligera" } else { "fin del ahorro con batería" });
             self.detener_grabadora();
             self.iniciar_grabadora();
         }
@@ -302,6 +322,7 @@ impl Bandeja {
         if self.guardando.swap(true, Ordering::SeqCst) {
             return; // ya se está guardando uno
         }
+        self.ultimo_largo = largo;
         let (cfg, guardando, resultado) = (self.cfg.clone(), self.guardando.clone(), self.resultado_clip.clone());
         let hwnd = self.hwnd.0 as isize;
         std::thread::spawn(move || {
@@ -342,8 +363,82 @@ impl Bandeja {
     unsafe fn clip_listo(&mut self) {
         let r = self.resultado_clip.lock().ok().and_then(|mut x| x.take());
         match r {
-            Some(Ok(ruta)) => self.ultimo_clip = Some(ruta),
-            Some(Err(e)) => self.globo("No se pudo guardar el clip", &e, true),
+            Some(Ok(ruta)) => {
+                self.ultimo_clip = Some(ruta);
+                if self.cfg.aviso_al_guardar {
+                    let s = texto_duracion(if self.ultimo_largo { self.cfg.segundos_largo } else { self.cfg.segundos });
+                    let detalle = match self.grabadora.as_ref().and_then(|g| g.juego()) {
+                        Some(j) => format!("{j} · últimos {s}"),
+                        None => format!("Los últimos {s}"),
+                    };
+                    aviso::mostrar(aviso::Tipo::Clip, "Clip guardado", &detalle);
+                }
+            }
+            Some(Err(e)) => {
+                if self.cfg.aviso_al_guardar {
+                    aviso::mostrar(aviso::Tipo::Error, "No se pudo guardar el clip", &e);
+                }
+                self.globo("No se pudo guardar el clip", &e, true)
+            }
+            None => {}
+        }
+        self.actualizar_estado();
+    }
+
+    /// Saca una foto de lo que se está grabando: el hilo de video la entrega en el próximo cuadro y se guarda
+    /// en otro hilo, con prioridad baja.
+    unsafe fn sacar_foto(&mut self) {
+        let Some(g) = self.grabadora.as_ref() else {
+            sonido::error();
+            return;
+        };
+        let (pedido, juego) = (g.pedir_foto(), g.juego());
+        let (cfg, resultado) = (self.cfg.clone(), self.resultado_foto.clone());
+        let hwnd = self.hwnd.0 as isize;
+        std::thread::spawn(move || {
+            let r = pedido
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .map_err(|_| anyhow::anyhow!("la grabadora no respondió"))
+                .and_then(|img| img)
+                .and_then(|img| {
+                    unsafe {
+                        use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN};
+                        let _ = SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+                    }
+                    crate::grabadora::foto::guardar(&cfg, juego.clone(), &img)
+                });
+            match &r {
+                Ok(_) if cfg.sonido_al_guardar => sonido::guardado(),
+                Ok(_) => {}
+                Err(e) => {
+                    log(&format!("no se pudo sacar la foto: {e:#}"));
+                    sonido::error();
+                }
+            }
+            if let Ok(mut x) = resultado.lock() {
+                *x = Some(r.map(|p| (p.display().to_string(), juego)).map_err(|e| format!("{e:#}")));
+            }
+            unsafe {
+                let _ = PostMessageW(HWND(hwnd as *mut _), WM_FOTO_LISTA, WPARAM(0), LPARAM(0));
+            }
+        });
+    }
+
+    unsafe fn foto_lista(&mut self) {
+        let r = self.resultado_foto.lock().ok().and_then(|mut x| x.take());
+        match r {
+            Some(Ok((ruta, juego))) => {
+                // La Biblioteca se entera igual que con un clip.
+                self.ultimo_clip = Some(ruta);
+                if self.cfg.aviso_al_guardar {
+                    aviso::mostrar(aviso::Tipo::Foto, "Foto guardada", juego.as_deref().unwrap_or("En la Biblioteca"));
+                }
+            }
+            Some(Err(e)) => {
+                if self.cfg.aviso_al_guardar {
+                    aviso::mostrar(aviso::Tipo::Error, "No se pudo sacar la foto", &e);
+                }
+            }
             None => {}
         }
         self.actualizar_estado();
@@ -400,6 +495,7 @@ fn id_atajo(c: CualAtajo) -> i32 {
     match c {
         CualAtajo::Guardar => ID_GUARDAR as i32,
         CualAtajo::GuardarLargo => ID_GUARDAR_LARGO as i32,
+        CualAtajo::Foto => ID_FOTO as i32,
         CualAtajo::Pausa => ID_PAUSA as i32,
         CualAtajo::Carpeta => ID_CARPETA as i32,
     }
@@ -477,6 +573,9 @@ unsafe fn accion(hwnd: HWND, id: usize) {
         }
         ID_GUARDAR_LARGO => {
             con_app(|b| b.guardar_clip(true));
+        }
+        ID_FOTO => {
+            con_app(|b| b.sacar_foto());
         }
         ID_PAUSA => {
             con_app(|b| b.alternar_pausa());
@@ -572,12 +671,24 @@ unsafe extern "system" fn procedimiento(hwnd: HWND, msg: u32, wp: WPARAM, lp: LP
             con_app(|b| b.avisar_actualizacion());
             LRESULT(0)
         }
+        WM_FOTO_LISTA => {
+            con_app(|b| b.foto_lista());
+            LRESULT(0)
+        }
         WM_POWERBROADCAST => {
             con_app(|b| b.cambio_de_energia());
             LRESULT(1)
         }
         WM_TIMER => {
-            con_app(|b| b.actualizar_estado());
+            con_app(|b| {
+                b.actualizar_estado();
+                // Cada 5 minutos: las copias para Discord vencidas se borran (es mirar una carpeta chica).
+                if b.revisar_copias_en == 0 {
+                    b.revisar_copias_en = 300;
+                    crate::limpieza::borrar_copias_discord(&b.cfg.carpeta, b.cfg.discord_minutos);
+                }
+                b.revisar_copias_en -= 1;
+            });
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -636,6 +747,9 @@ pub fn ejecutar(fondo: bool) {
             error_atajos: None,
             guardando: Arc::new(AtomicBool::new(false)),
             resultado_clip: Arc::new(Mutex::new(None)),
+            ultimo_largo: false,
+            revisar_copias_en: 0,
+            resultado_foto: Arc::new(Mutex::new(None)),
             ultimo_clip: None,
             icono: crear_icono(lado, [a.r(), a.g(), a.b()]),
             icono_gris: crear_icono(lado, [g.r(), g.g(), g.b()]),
@@ -666,5 +780,23 @@ pub fn ejecutar(fondo: bool) {
         if let Ok(m) = mutex {
             let _ = CloseHandle(m);
         }
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    #[test]
+    fn ahorro_con_bateria() {
+        let mut cfg = Config::default();
+        cfg.fps = 60;
+        cfg.resolucion = Resolucion::P1080;
+        cfg.avanzado.activo = true;
+        let c = con_ahorro(&cfg);
+        assert_eq!((c.fps, c.resolucion, c.calidad, c.avanzado.activo), (30, Resolucion::P720, Calidad::Ligera, false));
+        // Lo demás queda igual, y cambiar a ahorro reinicia la grabación.
+        assert_eq!(c.segundos, cfg.segundos);
+        assert!(cambia_la_grabacion(&cfg, &c));
     }
 }

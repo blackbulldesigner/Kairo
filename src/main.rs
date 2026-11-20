@@ -13,6 +13,7 @@
 mod abrir;
 mod actualizacion;
 mod autoinicio;
+mod aviso;
 mod compartir;
 mod bandeja;
 mod config;

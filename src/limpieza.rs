@@ -15,6 +15,31 @@ use crate::registro::log;
 
 pub const GB: u64 = 1024 * 1024 * 1024;
 
+/// Carpeta (dentro de la de clips) de las copias livianas para Discord. Se borran solas
+/// (`borrar_copias_discord`) y la limpieza automática no las cuenta.
+pub const CARPETA_DISCORD: &str = "Para Discord";
+
+/// Borra las copias para Discord que tienen más de `minutos` (y sus datos). Devuelve cuántas borró. Es mirar
+/// una carpeta chica: corre en la grabadora cada unos minutos y en la ventana al revisar la Biblioteca.
+pub fn borrar_copias_discord(carpeta: &Path, minutos: u32) -> usize {
+    let Ok(entradas) = std::fs::read_dir(carpeta.join(CARPETA_DISCORD)) else { return 0 };
+    let limite = SystemTime::now() - Duration::from_secs(minutos as u64 * 60);
+    let mut borradas = 0;
+    for e in entradas.flatten() {
+        let ruta = e.path();
+        if !ruta.extension().is_some_and(|x| x.eq_ignore_ascii_case("mp4")) {
+            continue;
+        }
+        let vieja = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < limite);
+        if vieja && std::fs::remove_file(&ruta).is_ok() {
+            let _ = std::fs::remove_file(datos_clip::ruta_datos(&ruta));
+            log(&format!("copia para Discord borrada (más de {minutos} min): {}", ruta.display()));
+            borradas += 1;
+        }
+    }
+    borradas
+}
+
 #[derive(Clone, Debug)]
 pub struct ClipEnDisco {
     pub ruta: PathBuf,
@@ -31,7 +56,8 @@ pub fn clips_de_kairo(carpeta: &Path) -> Vec<ClipEnDisco> {
             let ruta = e.path();
             let Ok(meta) = e.metadata() else { continue };
             if meta.is_dir() {
-                if nivel < 2 {
+                // Las copias para Discord se borran solas: no cuentan.
+                if nivel < 2 && !(nivel == 0 && e.file_name() == CARPETA_DISCORD) {
                     buscar(&ruta, nivel + 1, v);
                 }
                 continue;
@@ -117,6 +143,25 @@ mod pruebas {
         let cuando = SystemTime::now() - Duration::from_secs(dias * 86_400);
         std::fs::File::options().write(true).open(&ruta).unwrap().set_modified(cuando).unwrap();
         datos_clip::escribir(&ruta, &datos_clip::DatosClip { version: 1, favorito, ..Default::default() });
+    }
+
+    #[test]
+    fn copias_para_discord() {
+        let dir = std::env::temp_dir().join(format!("kairo-prueba-discord-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let copias = dir.join(CARPETA_DISCORD);
+        std::fs::create_dir_all(&copias).unwrap();
+        // Una copia de hace 2 horas y una recién hecha (los días van en fracción: 2 h = 1/12 de día).
+        clip(&copias, "vieja.mp4", 1, 0, false);
+        let vieja = copias.join("vieja.mp4");
+        std::fs::File::options().write(true).open(&vieja).unwrap().set_modified(SystemTime::now() - Duration::from_secs(2 * 3600)).unwrap();
+        clip(&copias, "nueva.mp4", 1, 0, false);
+        // La limpieza automática no las cuenta.
+        assert!(clips_de_kairo(&dir).is_empty());
+        assert_eq!(borrar_copias_discord(&dir, 60), 1);
+        assert!(!vieja.exists() && !datos_clip::ruta_datos(&vieja).exists());
+        assert!(copias.join("nueva.mp4").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

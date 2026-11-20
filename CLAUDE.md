@@ -68,8 +68,17 @@ Ver `README.md` para el plan por fases.
 - `src/medios/` (solo la ventana, nunca la grabadora): `reproductor.rs` (hilo de video que achica a 1280×720 y
   hilo de audio con WASAPI que mezcla las pistas con su volumen y lleva el reloj), `exportar.rs` (recorte sin
   recodificar el video, audio rearmado por pista) y `comprimir.rs` (recodificar con el sink writer). La interfaz
-  es `src/ui/visor.rs` (Ver, Editar, Comprimir), dentro de la Biblioteca. `discord.rs`: la copia de menos de 20 MB
-  (en `%TEMP%\Kairo Discord`, con el mismo nombre; se borra al día siguiente).
+  es `src/ui/visor.rs` (Ver, Editar, Comprimir), dentro de la Biblioteca. `discord.rs`: la copia de menos de 20 MB,
+  en `<carpeta de clips>\Para Discord` (categoría propia en la Biblioteca, fuera de "Todos"). Se borra sola después de
+  `discord_minutos` (15, 60 o 1440): `limpieza::borrar_copias_discord`, en la grabadora cada 5 min y en la ventana
+  al revisar la Biblioteca. La limpieza automática no cuenta esa carpeta.
+- `src/aviso.rs` (grabadora): el cartelito al guardar un clip o una foto. Ventana `WS_EX_LAYERED` con
+  `SetLayeredWindowAttributes` (transparencia pareja) y `WDA_EXCLUDEFROMCAPTURE` para que no salga en los clips: con
+  `UpdateLayeredWindow` (transparencia por píxel, para sombra y esquinas redondeadas) Windows rechaza la exclusión
+  ("no hay memoria"), probado. Por eso es rectangular. Trabaja en píxeles reales (DPI por monitor) solo en ese rato.
+- `src/grabadora/foto.rs`: la foto del atajo "Sacar foto". El hilo de video copia `ultimo` (el cuadro BGRA) a una
+  textura que lee el procesador solo cuando se pide; la bandeja la guarda en PNG en otro hilo, con prioridad baja.
+  La Biblioteca muestra los PNG como fotos (`Clip::foto`).
 - `src/compartir.rs` (solo la ventana): copiar archivos al portapapeles (CF_HDROP), como "Copiar" en el Explorador.
   (Arrastrar clips afuera de la ventana se probó y se sacó: la persona prefiere clic derecho → Copiar para Discord.)
 - `src/ui/logos.rs`: logos que no trae Segoe MDL2 (el de Discord), dibujados una vez como textura chica.
@@ -118,10 +127,15 @@ Ver `README.md` para el plan por fases.
 - `--prueba-discord <clip>` deja el clip listo para Discord (achica la copia si pesa más de 20 MB), revisa el peso
   y lo copia al portapapeles (`Get-Clipboard -Format FileDropList` lo muestra). Cambia el portapapeles de la persona.
   `KAIRO_CAPTURA_DISCORD=<n>` con `--captura-ui biblioteca` muestra la tarjeta n achicándose.
-- `--prueba-discord <clip> sin-copiar` no toca el portapapeles (úsalo si la persona está usando la PC).
+- `--prueba-discord <clip> sin-copiar` no toca el portapapeles (úsalo si la persona está usando la PC). La copia queda
+  en `<carpeta de clips>\Para Discord`: borrarla después.
+- `--prueba-aviso <png> [mostrar]` dibuja los avisos (clip, foto y error, a 100 % y 150 %) en un PNG; con `mostrar`
+  saca uno de verdad 3 s y muestra la afinidad (17 = fuera de las capturas).
+- `--prueba-foto <png>` arranca la grabadora, pide una foto y la guarda (muestra tamaño, tiempos y brillo; 0 = negra).
+  Es la pantalla real: no mirarla, borrarla (y su `.kairo`).
 - No mover el mouse de Windows con scripts para probar (la persona puede estar usando la PC). Para lo que se hace
-  con el mouse, un mouse de mentira solo adentro de egui: `KAIRO_PRUEBA_MARCO=x0,y0,x1,y1[,soltar|menu]` con
+  con el mouse, un mouse de mentira solo adentro de egui: `KAIRO_PRUEBA_MARCO=x0,y0,x1,y1[,soltar|menu|clic]` con
   `--captura-ui biblioteca` arrastra un recuadro de selección (en puntos de la ventana; con `soltar` lo suelta) o,
-  con `menu`, hace clic derecho en (x0, y0). Con 1280x780, la primera fila de tarjetas va de y≈253 a 483.
+  con `menu`, hace clic derecho en (x0, y0) y con `clic`, un clic izquierdo (por ejemplo, en un chip). Con 1280x780, la primera fila de tarjetas va de y≈253 a 483.
 - `--prueba-tira <mp4> <png> <y> <alto> <n>` apila una franja de `n` cuadros del clip: sirve para ver un video que
   manda la persona (por ejemplo, cómo se mueve una barra) sin abrirlo entero. Borrar la imagen después.
