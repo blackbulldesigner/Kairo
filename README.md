@@ -4,12 +4,14 @@ Grabador de clips instantáneos para Windows 10 y 11. Graba en segundo plano y, 
 los últimos segundos como MP4. Está pensado para que el juego no pierda FPS, tanto en laptops como en
 PCs de escritorio.
 
-> **Estado: vista previa.** La grabadora ya funciona: graba el monitor en segundo plano y guarda los
-> últimos segundos con F9, con el sonido del sistema. Funciona también en laptops con dos tarjetas
-> (captura de respaldo), en tarjetas sin encoder (por procesador) y baja la calidad con batería.
-> Detecta el juego, puede grabar solo el juego y separa el audio del juego, del resto del sistema y
-> del micrófono, y graba aparte los programas que elijas (Discord, música…). Tiene biblioteca de clips con
-> reproductor propio, editor (recortar y el volumen de cada pista) y compresor para compartir.
+![Kairo 1.0](promo/kairo-1.0-a-ancha.png)
+
+> **Kairo 1.0.** Graba en segundo plano y guarda los últimos segundos con F9, sin que el juego lo note.
+> Detecta el juego, puede grabar solo el juego y separa en pistas el audio del juego, del resto del sistema,
+> del micrófono y de los programas que elijas (Discord, música…). Tiene biblioteca de clips con reproductor
+> propio, editor (recortar y el volumen de cada pista), compresor, fotos y copias para Discord. Funciona
+> también en laptops con dos tarjetas, en tarjetas sin encoder (por procesador) y baja la calidad con batería.
+> Las imágenes para compartirlo están en [`promo/`](promo).
 
 ## Cómo se usa
 
@@ -112,11 +114,25 @@ el desinstalador.
   cada clip, y compresor (1080p, 720p o menos de 20 MB) con el encoder de la tarjeta y prioridad baja.
 - [ ] **Fase 6: extras.** ~~Instalador~~ (listo: `KairoSetup.exe`, sin permisos de administrador, con
   desinstalador en "Aplicaciones instaladas"), ~~actualizaciones~~ (listo: aviso y actualización con
-  SHA-256) y firma digital.
+  SHA-256), ~~aviso en pantalla, fotos y copias para Discord~~ (listos en la 1.0) y firma digital.
 
-**Cómo medimos "no afecta los FPS":** mismo juego, misma escena, laptop conectada al cargador y 3 corridas por
-caso: sin grabar, con Medal, con Kairo y con la grabadora de NVIDIA o AMD. Se anotan FPS promedio, "1 % low" y
-temperatura. La meta es perder menos que Medal y apuntar a 3 % o menos.
+## Kairo contra Medal
+
+La meta era perder menos FPS que Medal y 3 % o menos. Prueba propia (20/11/2026): la misma escena de prueba a
+1920×1080, pesada y sin límite de FPS (~200 FPS sin grabar), 60 s grabando con cada uno a 1080p 60 FPS con
+H.264 de la tarjeta, en una PC con RTX 5060 Ti. "Sin nada" es el promedio de una ronda al principio y otra al
+final (dieron casi igual: la PC no se calentó).
+
+| | FPS | FPS que le quita | 1 % más lento (tirones) | Le quita | Procesador | Tarjeta | Encoder | RAM |
+|---|---|---|---|---|---|---|---|---|
+| Sin nada | 202,7 | – | 186,9 | – | – | – | – | – |
+| **Kairo** | **197,5** | **2,6 %** | **175,0** | **6,4 %** | **0,01 %** | **1,3 %** | 7,5 % | **239 MB** |
+| Medal | 193,7 | 4,4 % | 159,0 | 14,9 % | 0,37 % | 7,1 % | 9,4 % | 1410 MB |
+
+Procesador = de toda la PC; tarjeta y encoder = uso de esos motores de la tarjeta; RAM = memoria privada (en Medal,
+con su ventana, que tiene que estar abierta para grabar). Para repetirla en otra PC:
+`powershell -ExecutionPolicy Bypass -File scripts\comparar-fps.ps1` (unos 5 minutos; pide abrir y cerrar Medal,
+que tiene que grabar la pantalla completa). Falta medir en laptops reales (Fase 0).
 
 ## Compilar
 

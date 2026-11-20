@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  body { width: 1080px; height: 1080px;  background: radial-gradient(circle at 100% 0%, rgba(59,127,232,0.30), rgba(59,127,232,0) 55%), #0D1015; }
+  .lienzo { padding: 80px 86px 70px; }
+  .titulo { font-size: 82px; margin-top: 44px; }
+  .bajada { font-size: 28px; margin-top: 20px; line-height: 1.35; }
+  .metricas { display: flex; flex-direction: column; gap: 34px; margin-top: 50px; }
+</style></head>
+<body><div class="lienzo">
+  <div class="marca"><img src="../recursos/logo.png"><b>Kairo</b><span class="version">1.0</span></div>
+  <h1 class="titulo">Graba tus jugadas <span class="acento">sin perder FPS</span></h1>
+  <p class="bajada sec">La misma escena de prueba, grabando 60 segundos con cada uno.</p>
+  <div class="metricas">
+    <div class="metrica">
+      <div class="etiqueta">FPS que le quita al juego</div>
+      <div class="fila"><span>Kairo</span><div class="pista"><div class="barra kairo" style="width:59%"></div></div><span class="valor">2,6 %</span></div>
+      <div class="fila sec"><span>Medal</span><div class="pista"><div class="barra medal" style="width:100%"></div></div><span class="valor">4,4 %</span></div>
+    </div>
+    <div class="metrica">
+      <div class="etiqueta">Tirones (el 1 % más lento)</div>
+      <div class="fila"><span>Kairo</span><div class="pista"><div class="barra kairo" style="width:43%"></div></div><span class="valor">6,4 %</span></div>
+      <div class="fila sec"><span>Medal</span><div class="pista"><div class="barra medal" style="width:100%"></div></div><span class="valor">14,9 %</span></div>
+    </div>
+    <div class="metrica">
+      <div class="etiqueta">RAM mientras graba</div>
+      <div class="fila"><span>Kairo</span><div class="pista"><div class="barra kairo" style="width:17%"></div></div><span class="valor">239 MB</span></div>
+      <div class="fila sec"><span>Medal</span><div class="pista"><div class="barra medal" style="width:100%"></div></div><span class="valor">1,4 GB</span></div>
+    </div>
+  </div>
+  <div style="margin-top:auto">
+    <div class="pie"><span class="verde">Gratis · Windows 10 y 11</span><span class="enlace">github.com/blackbulldesigner/Kairo</span></div>
+    <p class="nota" style="margin-top:14px">Prueba propia: escena de prueba a 1920×1080, Kairo y Medal grabando a 1080p 60 FPS, RTX 5060 Ti.</p>
+  </div>
+</div></body></html>

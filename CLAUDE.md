@@ -144,5 +144,11 @@ Ver `README.md` para el plan por fases.
   con los contadores de la tarjeta en inglés porque Windows los traduce). Kairo graba con `--grabar-fondo <s>` (tus
   ajustes, todo el escritorio, sin guardar). Tapa la pantalla: solo con la persona de acuerdo. Medal tiene que
   grabar la pantalla completa y abrirlo/cerrarlo lo hace la persona (el script pregunta).
+- Imágenes para compartir: `scripts\promo.ps1` arma `promo\kairo-1.0-*.png` desde `promo\fuente\*.html` con Edge sin
+  ventana (Edge sin ventana no aplica `backdrop-filter` ni desenfoca bien elementos que se salen: los nombres se
+  desenfocan en los recursos y los resplandores van en el fondo). Los recursos (`promo\recursos`, fuera de git) salen de
+  `--exportar-icono <png> <n>`, `--exportar-aviso <png> <escala> clip|foto|error <título> <detalle>`,
+  `--exportar-cuadro <mp4> <s> <png>` y `--captura-ui` con `KAIRO_CAPTURA_ATAJO=F9` (para no mostrar el atajo de la
+  persona). Desenfocar los nombres de otros jugadores antes de publicar.
 - `--prueba-tira <mp4> <png> <y> <alto> <n>` apila una franja de `n` cuadros del clip: sirve para ver un video que
   manda la persona (por ejemplo, cómo se mueve una barra) sin abrirlo entero. Borrar la imagen después.

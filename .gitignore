@@ -1,4 +1,6 @@
 /target
 *.png
 !docs/**/*.png
+# Las imágenes para compartir sí; sus recursos no (tienen cosas de la pantalla de quien las arma).
+!promo/*.png
 /dist

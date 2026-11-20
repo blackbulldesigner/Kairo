@@ -1,0 +1,27 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: #0D1015; color: #E6EBF1; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+.lienzo { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; }
+.marca { display: flex; align-items: center; gap: 18px; }
+.marca img { width: 64px; height: 64px; }
+.marca b { font-size: 40px; font-weight: 600; letter-spacing: -0.5px; }
+.version { font-size: 22px; font-weight: 600; color: #D3E2F8; background: #19283D; border: 1px solid #254575; border-radius: 999px; padding: 3px 16px; }
+.titulo { font-weight: 700; letter-spacing: -2px; line-height: 1.02; }
+.acento { color: #4C8CF0; }
+.verde { color: #35C683; }
+.sec { color: #959CA7; }
+.nota { font-size: 19px; color: #6B7079; }
+.pie { display: flex; align-items: center; justify-content: space-between; font-size: 26px; }
+.enlace { color: #4C8CF0; font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 12px; }
+.chip { font-size: 25px; color: #D3E2F8; background: #19283D; border: 1px solid #254575; border-radius: 999px; padding: 8px 22px; }
+.ventana { position: relative; border-radius: 18px; overflow: hidden; border: 1px solid #2C3642; box-shadow: 0 30px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.03); }
+.ventana img { display: block; width: 100%; }
+.borroso { position: absolute; backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); }
+.metrica { display: flex; flex-direction: column; gap: 12px; }
+.metrica .etiqueta { font-size: 27px; font-weight: 600; }
+.fila { display: grid; grid-template-columns: 120px 1fr 150px; align-items: center; gap: 18px; font-size: 26px; }
+.pista { height: 26px; background: #161A23; border-radius: 8px; overflow: hidden; }
+.barra { height: 100%; border-radius: 8px; }
+.barra.kairo { background: #3B7FE8; }
+.barra.medal { background: #4A4E57; }
+.valor { font-weight: 600; text-align: right; }
